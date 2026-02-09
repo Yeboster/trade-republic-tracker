@@ -1,64 +1,41 @@
-# Trade Republic Tracker
+# Trade Republic Portfolio Tracker (WIP)
 
-A Python-based tool to track Trade Republic portfolio and transactions, with a focus on **Card Spending Analysis**.
-
-## Status
-**Current Iteration:** 3 (Transaction Fetching)
-**Goal:** Replace the need for manual CSV exports by directly accessing the API.
+This project aims to provide a reliable way to fetch and analyze your Trade Republic portfolio and transactions, with a specific focus on **card transactions** (spending analysis).
 
 ## Features
-- [x] **Authentication**: Login with Phone + PIN + 2FA (SMS).
-- [x] **WebSocket Client**: Connects to Trade Republic's real-time API.
-- [x] **Timeline Fetching**: Retrieves transaction history.
-- [x] **Card Analysis**: Filters for card transactions (Spending).
+- [x] Authentication (Login/OTP)
+- [x] WebSocket Subscription (Timeline)
+- [x] Card Transactions Filtering (Implemented in `main.py`)
+- [x] Data Export (CSV) - Exports `card_transactions.csv`
+- [ ] Detailed Spending Analysis (Merchant Categories, Monthly breakdown)
 
-## Usage
+## Setup
 
-### Prerequisites
-- Python 3.8+
-- `pip install -r requirements.txt`
-
-### Running
-1. **First Login (Interactive):**
+1. Install dependencies:
    ```bash
-   python main.py --phone "+49123456789" --pin "1234"
-   ```
-   You will be prompted for the SMS OTP.
-   After successful login, the **Session Token** will be printed.
-
-2. **Subsequent Runs (Cached Session):**
-   ```bash
-   python main.py --session "<YOUR_SESSION_TOKEN>"
+   pip install -r requirements.txt
    ```
 
-## Findings & API Notes
+2. Create a `.env` file with your credentials:
+   ```
+   TR_PHONE_NUMBER=+49123456789
+   TR_PIN=1234
+   ```
 
-### Authentication
-- **Endpoint**: `https://api.traderepublic.com/api/v1/auth/web/login`
-- **Flow**:
-  1. POST `login` (Phone, PIN) -> Returns `processId`.
-  2. POST `login/<processId>/<OTP>` -> Returns `tr_session` and `tr_refresh` cookies.
+3. Run the script:
+   ```bash
+   python main.py
+   ```
+   - First run will require OTP (check your phone).
+   - Tokens are saved to `tokens.json`.
+   - The script will fetch your timeline, filter card transactions, and save them to `card_transactions.csv`.
 
-### WebSocket Protocol
-- **Endpoint**: `wss://api.traderepublic.com/`
-- **Connect**: Sends `connect 33 {"locale": "en", ...}`
-- **Subscribe**: Sends `sub <id> {"type": "timelineTransactions", "token": "...", "after": "<cursor>"}`
-- **Response**: `<id> <state> <payload>` (e.g., `1 A {...}`)
-  - `A`: Data payload (Action?)
-  - `C`: Continue?
-  - `E`: Error
+## Iteration Progress
 
-### Transaction Data
-- **Card Transactions** are identified by `eventType`:
-  - `card_successful_transaction`
-  - `card_failed_transaction`
-  - `card_refund`
-- **Payload** includes:
-  - `title`: Merchant Name (e.g., "Rewe")
-  - `amount.value`: Amount
-  - `timestamp`: Date/Time
+- **Iteration 1 & 2:** Basic Auth & WebSocket (Done)
+- **Iteration 3 (Current):** Transaction History & Card Filtering (Done)
+- **Iteration 4:** Data Parsing & CSV Export (Basic Version Done)
+- **Iteration 5:** Spending Analysis (Next Step)
 
-## Next Steps
-- [ ] **Iteration 4**: CSV Export with Merchant Category Parsing.
-- [ ] **Iteration 5**: Spending Analytics (Monthly totals, etc.).
-- [ ] **Security**: Securely store tokens (keyring?).
+## Reference
+Inspired by [dhojayev/traderepublic-portfolio-downloader](https://github.com/dhojayev/traderepublic-portfolio-downloader).
