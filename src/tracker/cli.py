@@ -18,6 +18,7 @@ async def main():
     parser.add_argument("--limit", type=int, default=0,
                         help="Max transactions to fetch (0 = all, default: all)")
     parser.add_argument("--output", default="transactions.csv", help="Output CSV file")
+    parser.add_argument("--input", help="Input CSV file (analyze existing data without fetching)")
     parser.add_argument("--otp", help="OTP code")
     parser.add_argument("--card-only", action="store_true",
                         help="Only show/export card transactions")
@@ -26,6 +27,46 @@ async def main():
     
     args = parser.parse_args()
 
+    # ── Mode: Offline Analysis ──────────────────────────────
+    if args.input:
+        if not os.path.exists(args.input):
+            logger.error(f"Input file not found: {args.input}")
+            return
+            
+        logger.info(f"Loading transactions from {args.input}...")
+        import csv
+        transactions = []
+        try:
+            with open(args.input, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Reconstruct dict structure expected by analyzer
+                    # Analyzer expects: normalized_amount, category, merchant, spending_category
+                    try:
+                        t = {
+                            "normalized_amount": float(row.get("normalized_amount", 0)),
+                            "category": row.get("category", "other"),
+                            "merchant": row.get("merchant", "Unknown"),
+                            "spending_category": row.get("spending_category", ""),
+                            "timestamp": row.get("timestamp"),
+                            "status": row.get("status"),
+                            "currency": row.get("currency", "EUR"),
+                            "subtitle_raw": row.get("subtitle_raw", ""),
+                        }
+                        transactions.append(t)
+                    except ValueError:
+                        continue # Header or bad row
+        except Exception as e:
+            logger.error(f"Failed to read CSV: {e}")
+            return
+
+        logger.info(f"Loaded {len(transactions)} transactions.")
+        analyzer = PortfolioAnalyzer(transactions)
+        report = analyzer.generate_report()
+        print(f"\n{report}\n")
+        return
+
+    # ── Mode: Fetch & Analyze ───────────────────────────────
     phone = args.phone or os.environ.get("TR_PHONE")
     pin = args.pin or os.environ.get("TR_PIN")
     otp_env = os.environ.get("TR_OTP")

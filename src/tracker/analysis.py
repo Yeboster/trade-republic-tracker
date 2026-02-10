@@ -93,14 +93,31 @@ class PortfolioAnalyzer:
             key=lambda x: x[1], reverse=True
         )[:10]
 
+        # Category breakdown
+        by_category = defaultdict(lambda: {"out": 0.0, "in": 0.0, "count": 0})
+        for t in card_txns:
+            cat = t.get("spending_category", "Other") or "Other"
+            val = t["normalized_amount"]
+            by_category[cat]["count"] += 1
+            if val < 0:
+                by_category[cat]["out"] += abs(val)
+            else:
+                by_category[cat]["in"] += val
+
         lines = [
             "── CARD SPENDING ─────────────────────",
             f"  Gross Spent:   {total_spent:>10,.2f}",
             f"  Refunds:       {total_refund:>10,.2f}",
             f"  Net Spent:     {net:>10,.2f}",
             "",
-            "  Top 10 Merchants (net):",
+            "  By Category:",
         ]
+        for cat, data in sorted(by_category.items(), key=lambda x: x[1]["out"], reverse=True):
+            net_cat = data["out"] - data["in"]
+            lines.append(f"    {cat:<20s}  {net_cat:>10,.2f}  ({data['count']} txns)")
+
+        lines.append("")
+        lines.append("  Top 10 Merchants (net):")
         for i, (m, a) in enumerate(top, 1):
             lines.append(f"    {i:>2}. {m:<30s} {a:>10,.2f}")
 

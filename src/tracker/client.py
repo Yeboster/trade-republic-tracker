@@ -284,3 +284,21 @@ class TradeRepublicClient:
         if not fetch_all:
             return all_transactions[:limit]
         return all_transactions
+
+    async def fetch_transaction_detail(self, txn_id: str) -> Optional[Dict]:
+        """
+        Fetches detail for a single transaction (timelineDetail).
+        May contain category/merchant metadata not in the list view.
+        """
+        if not self.ws:
+            await self.ws_connect()
+
+        sub_id = await self._ws_subscribe("timelineDetail", {"id": txn_id})
+        try:
+            data = await self._ws_receive_response(sub_id, timeout=10.0)
+            await self._ws_unsubscribe(sub_id)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching detail for {txn_id}: {e}")
+            await self._ws_unsubscribe(sub_id)
+            return None

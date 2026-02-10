@@ -2,6 +2,8 @@ import csv
 import logging
 from typing import List, Dict
 
+from .categories import categorize_merchant
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +88,11 @@ class TimelineManager:
         t["currency"] = currency
         t["category"] = category
         t["subtitle_raw"] = t.get("subtitle") or ""
+        # Add spending category for card transactions
+        if category == "card":
+            t["spending_category"] = categorize_merchant(t["merchant"])
+        else:
+            t["spending_category"] = ""
         return t
 
     # ── Export ───────────────────────────────────────────────────────
@@ -106,7 +113,7 @@ class TimelineManager:
             return
 
         fieldnames = [
-            "id", "timestamp", "category", "merchant",
+            "id", "timestamp", "category", "spending_category", "merchant",
             "normalized_amount", "currency", "status",
             "subtitle_raw", "title",
         ]
