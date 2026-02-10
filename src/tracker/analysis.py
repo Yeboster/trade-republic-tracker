@@ -24,19 +24,12 @@ class SpendingAnalyzer:
         currency = "EUR" 
 
         for txn in self.transactions:
-            # Prefer normalized amount if available
+            # Use normalized amount (set by TimelineManager) or raw value
             if 'normalized_amount' in txn:
                 val = txn['normalized_amount']
             else:
-                # Fallback for raw data
                 amount_data = txn.get('amount', {})
                 val = amount_data.get('value', 0.0)
-                # Apply heuristic if raw
-                if txn.get('eventType') == 'card_successful_transaction':
-                    val = -abs(val)
-                elif txn.get('eventType') == 'card_refund':
-                    val = abs(val)
-                # Else assume signed as is
 
             cur = txn.get('currency', txn.get('amount', {}).get('currency', 'EUR'))
             

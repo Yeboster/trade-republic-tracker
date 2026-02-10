@@ -13,60 +13,81 @@ class TimelineManager:
         self.transactions = await self.client.fetch_timeline_transactions(limit)
         return self.transactions
 
+    def _is_card_transaction(self, txn: Dict) -> bool:
+        """
+        Identifies card (merchant) transactions from the timeline.
+        
+        Card transactions have:
+        - icon containing "merchant-"
+        - No subtitle (None)
+        - cashAccountNumber is None
+        
+        Investments have ISINs in icon, subtitles like "Buy Order", 
+        "Saving executed", "Saveback", "Round up", "Sell Order", "PEA".
+        """
+        icon = txn.get("icon") or ""
+        subtitle = txn.get("subtitle")
+        
+        # Primary signal: merchant icon
+        if "merchant-" in icon:
+            return True
+        
+        # If no icon match, use heuristic:
+        # No subtitle + no cashAccountNumber + negative amount = likely card spend
+        if subtitle is None and txn.get("cashAccountNumber") is None:
+            amount_val = (txn.get("amount") or {}).get("value", 0)
+            if amount_val < 0:
+                return True
+        
+        return False
+
+    def _is_card_refund(self, txn: Dict) -> bool:
+        """
+        Identifies card refunds. Refunds have positive amounts
+        and merchant icons.
+        """
+        icon = txn.get("icon") or ""
+        amount_val = (txn.get("amount") or {}).get("value", 0)
+        
+        if "merchant-" in icon and amount_val > 0:
+            return True
+        
+        return False
+
     def filter_card_transactions(self) -> List[Dict]:
         """
-        Filters the raw transactions for card events.
+        Filters the raw transactions for card events (spending + refunds).
         """
         card_txns = []
-        # Filter for relevant event types
-        # card_successful_transaction: Spending
-        # card_refund: Refund
-        # card_failed_transaction: Failed
-        
-        relevant_types = [
-            'card_successful_transaction',
-            'card_refund',
-            'card_failed_transaction'
-        ]
         
         for txn in self.transactions:
-            event_type = txn.get('eventType')
-            if event_type in relevant_types:
-                # Enhance transaction with normalized data
-                normalized = self._normalize_card_transaction(txn)
+            is_card = self._is_card_transaction(txn)
+            is_refund = self._is_card_refund(txn)
+            
+            if is_card or is_refund:
+                normalized = self._normalize_card_transaction(txn, is_refund=is_refund)
                 card_txns.append(normalized)
                  
         return card_txns
 
-    def _normalize_card_transaction(self, txn: Dict) -> Dict:
+    def _normalize_card_transaction(self, txn: Dict, is_refund: bool = False) -> Dict:
         """
         Adds convenience fields to the transaction dict.
         """
-        # Create a copy to avoid mutating original if that matters (shallow copy fine)
         t = txn.copy()
         
-        event_type = t.get('eventType')
         title = t.get('title', 'Unknown')
         amount_data = t.get('amount', {})
         val = amount_data.get('value', 0.0)
         currency = amount_data.get('currency', 'EUR')
         
-        # Determine normalized amount (signed)
-        # Assumption: API returns absolute value.
-        # Spending -> Negative
-        # Refund -> Positive
-        
-        signed_amount = val
-        if event_type == 'card_successful_transaction':
-            signed_amount = -abs(val)
-        elif event_type == 'card_refund':
-            signed_amount = abs(val)
-        elif event_type == 'card_failed_transaction':
-            signed_amount = 0.0 # Or keep it as is but mark status?
-            
-        t['normalized_amount'] = signed_amount
-        t['merchant'] = title # Title is usually the merchant name
+        # The API returns signed values already:
+        # Spending: negative (e.g. -18.28)
+        # Refunds: positive
+        t['normalized_amount'] = val
+        t['merchant'] = title
         t['currency'] = currency
+        t['tx_type'] = 'refund' if is_refund else 'spending'
         
         return t
 
@@ -77,7 +98,6 @@ class TimelineManager:
             logger.warning("No card transactions to export.")
             return
 
-        # Define CSV columns
         fieldnames = [
             "id",
             "timestamp",
@@ -85,7 +105,7 @@ class TimelineManager:
             "normalized_amount",
             "currency",
             "status",
-            "eventType",
+            "tx_type",
             "title"
         ]
         
@@ -98,7 +118,7 @@ class TimelineManager:
                 "normalized_amount": t.get("normalized_amount"),
                 "currency": t.get("currency"),
                 "status": t.get("status"),
-                "eventType": t.get("eventType"),
+                "tx_type": t.get("tx_type"),
                 "title": t.get("title")
             }
             rows.append(row)
