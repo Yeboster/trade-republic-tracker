@@ -7,6 +7,9 @@ Add merchants here as you discover them. Case-insensitive matching.
 import logging
 import unicodedata
 import re
+import csv
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,56 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
+
+_csv_rules = []
+
+def load_csv_rules():
+    """Loads merchant → category rules from data/categories.csv if present."""
+    global _csv_rules
+    if _csv_rules:
+        return
+
+    # projects/trade-republic-tracker/src/tracker/categories.py -> .../data/categories.csv
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    csv_path = base_dir / "data" / "categories.csv"
+    
+    if not csv_path.exists():
+        logger.debug(f"No categories CSV found at {csv_path}")
+        return
+
+    try:
+        count = 0
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            try:
+                first_row = next(reader)
+                if first_row and "Merchant" in first_row[0]:
+                    pass # Header, skip
+                else:
+                    if len(first_row) >= 2:
+                        merchant, category = first_row[0], first_row[1]
+                        norm_merchant = normalize_text(merchant)
+                        if norm_merchant and category:
+                            _csv_rules.append((norm_merchant, category))
+                            count += 1
+            except StopIteration:
+                pass
+
+            for row in reader:
+                if len(row) >= 2:
+                    merchant, category = row[0], row[1]
+                    norm_merchant = normalize_text(merchant)
+                    if norm_merchant and category:
+                        _csv_rules.append((norm_merchant, category))
+                        count += 1
+        
+        # Sort rules by keyword length (longest first) to match specific rules before general ones
+        # e.g. "uber eats" before "uber"
+        _csv_rules.sort(key=lambda x: len(x[0]), reverse=True)
+        
+        logger.info(f"Loaded {count} rules from categories.csv")
+    except Exception as e:
+        logger.error(f"Failed to load categories CSV: {e}")
 
 
 # Default built-in rules
@@ -415,13 +468,20 @@ def add_rule(merchant_keyword: str, category: str):
 def categorize_merchant(merchant_name: str) -> str:
     """
     Returns a spending category for a merchant name.
-    Checks runtime rules first, then built-in defaults.
+    Checks CSV rules first, then runtime rules, then built-in defaults.
     """
     if not merchant_name:
         return "Other"
     
+    load_csv_rules()
+    
     # Normalize input: lowercase, remove accents
     norm_name = normalize_text(merchant_name)
+
+    # Check CSV rules
+    for keyword, category in _csv_rules:
+        if keyword in norm_name:
+            return category
     
     # Check runtime (custom) rules first
     for keyword, category in _runtime_rules:
