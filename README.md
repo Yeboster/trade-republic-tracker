@@ -16,6 +16,10 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - Provides Card Spending summary (Net Spent, Refunds, Top Merchants, Category breakdown).
   - Provides Investment summary (Net Invested, Top Assets).
   - Monthly breakdown of In/Out for both Cards and Investments.
+- **Iteration 6 (Refinement):** **Completed (2026-02-10).**
+  - Improved WebSocket stability (timeout handling, connection checks, graceful error recovery).
+  - Updated to use `timelineDetailV2` for fetching transaction details, matching the official app's behavior.
+  - Added robust response filtering to ignore echo/heartbeat messages.
 
 ## Usage
 

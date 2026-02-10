@@ -122,8 +122,8 @@ class TradeRepublicClient:
         logger.info("Tokens saved to tokens.json")
 
     async def ws_connect(self):
-        if not self.session_token:
-            raise ValueError("No session token. Log in first.")
+        if self.ws and not self.ws.closed:
+            return
 
         logger.info(f"Connecting to WebSocket {self.WS_URL}...")
         try:
@@ -137,6 +137,8 @@ class TradeRepublicClient:
             self.ws = await websockets.connect(
                 self.WS_URL,
                 additional_headers=extra_headers,
+                ping_interval=20,
+                ping_timeout=20,
             )
             await self.ws.send(self.CONNECT_MSG)
             logger.info("Sent connect message.")
@@ -150,9 +152,15 @@ class TradeRepublicClient:
                 
         except asyncio.TimeoutError:
             logger.error("WebSocket handshake timed out (10s).")
+            if self.ws:
+                await self.ws.close()
+            self.ws = None
             raise
         except Exception as e:
             logger.error(f"WebSocket connection failed: {e}")
+            if self.ws:
+                await self.ws.close()
+            self.ws = None
             raise
 
     async def close(self):
@@ -161,8 +169,7 @@ class TradeRepublicClient:
         self.client.close()
 
     async def _ws_subscribe(self, type_name: str, payload: Dict[str, Any] = None) -> int:
-        if not self.ws:
-            await self.ws_connect()
+        await self.ws_connect()
             
         self.sub_id_counter += 1
         sub_id = self.sub_id_counter
@@ -185,15 +192,27 @@ class TradeRepublicClient:
     async def _ws_receive_response(self, sub_id: int, timeout: float = 15.0) -> Optional[Dict]:
         """
         Waits for a response matching sub_id. Returns parsed JSON or None.
+        Ignores unrelated messages (echo, other subs).
         """
+        start_time = asyncio.get_running_loop().time()
+        
         while True:
+            # Check timeout manually since we loop
+            if asyncio.get_running_loop().time() - start_time > timeout:
+                logger.error(f"Timeout waiting for sub {sub_id} response")
+                return None
+
             try:
-                response = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+                # Use a small timeout for each recv to allow checking total timeout
+                response = await asyncio.wait_for(self.ws.recv(), timeout=1.0)
             except asyncio.TimeoutError:
-                logger.error(f"Timeout waiting for sub {sub_id}")
+                continue
+            except Exception as e:
+                logger.error(f"WebSocket receive error: {e}")
                 return None
                 
             if response.startswith("echo"):
+                # Echo messages are heartbeats or confirmations, safe to ignore for now
                 continue
 
             parts = response.split(maxsplit=2)
@@ -206,22 +225,29 @@ class TradeRepublicClient:
                 continue
                 
             if resp_id != sub_id:
+                # Message for another subscription, ignore
                 continue
                 
             state = parts[1]
             
             if state == "C":
+                # Completed/Closed subscription
                 continue
             elif state == "E":
-                logger.error(f"WS Error sub {sub_id}: {parts[2] if len(parts) > 2 else ''}")
+                # Error
+                error_msg = parts[2] if len(parts) > 2 else "Unknown error"
+                logger.error(f"WS Error sub {sub_id}: {error_msg}")
                 return None
             elif state == "A":
+                # Added (Initial data)
                 if len(parts) > 2:
                     return json.loads(parts[2])
                 return None
             elif state == "D":
+                # Deleted (Update) - usually not initial response
                 continue
             else:
+                # Update (U) or other
                 if len(parts) > 2:
                     return json.loads(parts[2])
                 return None
@@ -231,8 +257,8 @@ class TradeRepublicClient:
         Fetches timeline transactions. 
         limit=0 means fetch ALL (paginate until exhausted).
         """
-        if not self.ws:
-            await self.ws_connect()
+        # Ensure connection
+        await self.ws_connect()
             
         all_transactions = []
         cursor_after = None
@@ -256,9 +282,11 @@ class TradeRepublicClient:
             
             try:
                 valid_data = await self._ws_receive_response(sub_id, timeout=15.0)
+                # Important: Unsubscribe to free resources on server
                 await self._ws_unsubscribe(sub_id)
                 
                 if not valid_data:
+                    logger.warning(f"No data received for page {page}")
                     break
                 
                 items = valid_data.get("items", [])
@@ -271,14 +299,18 @@ class TradeRepublicClient:
                 
                 # Stop conditions
                 if not cursor_after:
-                    logger.info("No more pages.")
+                    logger.info("No more pages (end of timeline).")
                     break
                 if not fetch_all and len(all_transactions) >= limit:
                     break
                     
             except Exception as e:
                 logger.error(f"Error fetching page {page}: {e}")
-                await self._ws_unsubscribe(sub_id)
+                # Try to clean up
+                try:
+                    await self._ws_unsubscribe(sub_id)
+                except:
+                    pass
                 break
         
         if not fetch_all:
@@ -287,18 +319,21 @@ class TradeRepublicClient:
 
     async def fetch_transaction_detail(self, txn_id: str) -> Optional[Dict]:
         """
-        Fetches detail for a single transaction (timelineDetail).
+        Fetches detail for a single transaction (timelineDetailV2).
         May contain category/merchant metadata not in the list view.
         """
-        if not self.ws:
-            await self.ws_connect()
+        await self.ws_connect()
 
-        sub_id = await self._ws_subscribe("timelineDetail", {"id": txn_id})
+        # Use timelineDetailV2 as per reference implementation
+        sub_id = await self._ws_subscribe("timelineDetailV2", {"id": txn_id})
         try:
             data = await self._ws_receive_response(sub_id, timeout=10.0)
             await self._ws_unsubscribe(sub_id)
             return data
         except Exception as e:
             logger.error(f"Error fetching detail for {txn_id}: {e}")
-            await self._ws_unsubscribe(sub_id)
+            try:
+                await self._ws_unsubscribe(sub_id)
+            except:
+                pass
             return None

@@ -110,6 +110,13 @@ class TimelineManager:
             t["spending_category"] = categorize_merchant(t["merchant"])
         else:
             t["spending_category"] = ""
+            
+        # Add timestamp parsing for better sorting/filtering
+        ts = t.get("timestamp")
+        if ts:
+            # Simple ISO parse if possible, else keep string
+            t["timestamp_iso"] = ts
+        
         return t
 
     # ── Export ───────────────────────────────────────────────────────
