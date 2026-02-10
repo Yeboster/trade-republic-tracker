@@ -157,28 +157,29 @@ async def main():
     
     # 1. Feature: List Merchants (for LLM extraction)
     if args.list_merchants:
-        # Get all unique merchants from card transactions
-        merchants = sorted(list(set(t["merchant"] for t in transactions if t.get("category") == "card")))
+        from .categories import categorize_merchant, normalize_text
+        
+        # Get all unique merchants from card transactions, normalized
+        raw_merchants = [t["merchant"] for t in transactions if t.get("category") == "card"]
+        # Normalize and set to deduplicate
+        unique_merchants = sorted(list(set(normalize_text(m) for m in raw_merchants)))
         
         # Print count to stderr so it doesn't pollute CSV if redirected
-        print(f"Unique Merchants: {len(merchants)}", file=sys.stderr)
+        print(f"Unique Merchants (Normalized): {len(unique_merchants)}", file=sys.stderr)
         
         print("Merchant,Category")
-        from .categories import categorize_merchant
         
-        for m in merchants:
+        for m in unique_merchants:
             try:
+                # m is already normalized
                 cat = categorize_merchant(m)
                 # Escape quotes if necessary for CSV
                 m_safe = f'"{m}"' if ',' in m else m
-                # Force UTF-8 output handling implicitly by Python 3, but catch errors
                 print(f"{m_safe},{cat}")
             except Exception as e:
                 # Log error to stderr and continue
                 logger.error(f"Failed to process merchant '{m}': {e}")
-                # Print a safe fallback to keep the CSV structure valid
-                safe_m = m.encode('ascii', 'ignore').decode('ascii')
-                print(f"{safe_m},ERROR")
+                print(f"{m},ERROR")
         return
 
     # 2. Analyze
