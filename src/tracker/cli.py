@@ -160,16 +160,25 @@ async def main():
         # Get all unique merchants from card transactions
         merchants = sorted(list(set(t["merchant"] for t in transactions if t.get("category") == "card")))
         
-        # Calculate max length for pretty printing (optional, but CSV is requested)
-        # But user requested CSV specifically.
+        # Print count to stderr so it doesn't pollute CSV if redirected
+        print(f"Unique Merchants: {len(merchants)}", file=sys.stderr)
         
         print("Merchant,Category")
         from .categories import categorize_merchant
+        
         for m in merchants:
-            cat = categorize_merchant(m)
-            # Escape quotes if necessary for CSV
-            m_safe = f'"{m}"' if ',' in m else m
-            print(f"{m_safe},{cat}")
+            try:
+                cat = categorize_merchant(m)
+                # Escape quotes if necessary for CSV
+                m_safe = f'"{m}"' if ',' in m else m
+                # Force UTF-8 output handling implicitly by Python 3, but catch errors
+                print(f"{m_safe},{cat}")
+            except Exception as e:
+                # Log error to stderr and continue
+                logger.error(f"Failed to process merchant '{m}': {e}")
+                # Print a safe fallback to keep the CSV structure valid
+                safe_m = m.encode('ascii', 'ignore').decode('ascii')
+                print(f"{safe_m},ERROR")
         return
 
     # 2. Analyze
