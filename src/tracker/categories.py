@@ -4,8 +4,14 @@ Merchant → Category mapping via keyword matching.
 Add merchants here as you discover them. Case-insensitive matching.
 """
 
-# Keyword → category. First match wins, so order matters for ambiguous names.
-# Keys are lowercased substrings to match against merchant name.
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# Default built-in rules
+# Keyword → category. First match wins.
+# Keys are lowercased substrings.
 MERCHANT_RULES = [
     # ── Grocery ──────────────────────────────
     ("monoprix", "Grocery"),
@@ -53,7 +59,7 @@ MERCHANT_RULES = [
     # ── Transport ────────────────────────────
     ("sncf", "Transport"),
     ("ratp", "Transport"),
-    ("uber", "Transport"),  # after uber eats
+    ("uber", "Transport"),
     ("bolt", "Transport"),
     ("blablacar", "Transport"),
     ("navigo", "Transport"),
@@ -137,17 +143,29 @@ MERCHANT_RULES = [
     ("flixbus", "Travel"),
 ]
 
+# Can be extended at runtime
+_runtime_rules = []
+
+def add_rule(merchant_keyword: str, category: str):
+    """Adds a custom rule at runtime (inserted at the top)."""
+    _runtime_rules.insert(0, (merchant_keyword.lower(), category))
 
 def categorize_merchant(merchant_name: str) -> str:
     """
     Returns a spending category for a merchant name.
-    Falls back to 'Other' if no rule matches.
+    Checks runtime rules first, then built-in defaults.
     """
     if not merchant_name:
         return "Other"
     
     name_lower = merchant_name.lower()
     
+    # Check runtime (custom) rules first
+    for keyword, category in _runtime_rules:
+        if keyword in name_lower:
+            return category
+            
+    # Check defaults
     for keyword, category in MERCHANT_RULES:
         if keyword in name_lower:
             return category
