@@ -132,6 +132,12 @@ async def main():
             # Use filter_all_classified to ensure categories are applied
             transactions = timeline.filter_all_classified()
             
+            # Log breakdown
+            card_count = sum(1 for t in transactions if t["category"] == "card")
+            invest_count = sum(1 for t in transactions if t["category"] == "investment")
+            other_count = sum(1 for t in transactions if t["category"] == "other")
+            logger.info(f"Classified: Card={card_count}, Investment={invest_count}, Other={other_count}")
+            
             # Export if output requested
             categories = None
             if args.card_only:
@@ -151,10 +157,19 @@ async def main():
     
     # 1. Feature: List Merchants (for LLM extraction)
     if args.list_merchants:
+        # Get all unique merchants from card transactions
         merchants = sorted(list(set(t["merchant"] for t in transactions if t.get("category") == "card")))
-        print("\n--- Unique Merchants ---")
+        
+        # Calculate max length for pretty printing (optional, but CSV is requested)
+        # But user requested CSV specifically.
+        
+        print("Merchant,Category")
+        from .categories import categorize_merchant
         for m in merchants:
-            print(m)
+            cat = categorize_merchant(m)
+            # Escape quotes if necessary for CSV
+            m_safe = f'"{m}"' if ',' in m else m
+            print(f"{m_safe},{cat}")
         return
 
     # 2. Analyze
