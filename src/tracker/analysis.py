@@ -37,38 +37,57 @@ class PortfolioAnalyzer:
     def generate_report(self) -> str:
         card_txns = [t for t in self.transactions if t.get("category") == "card"]
         invest_txns = [t for t in self.transactions if t.get("category") == "investment"]
+        transfer_in = [t for t in self.transactions if t.get("category") == "transfer_in"]
+        transfer_out = [t for t in self.transactions if t.get("category") == "transfer_out"]
 
         sections = []
-        sections.append(self._overview_section(card_txns, invest_txns))
+        sections.append(self._overview_section(card_txns, invest_txns, transfer_in, transfer_out))
         sections.append(self._card_section(card_txns))
+        sections.append(self._subscription_section(card_txns))
         sections.append(self._investment_section(invest_txns))
+        sections.append(self._transfer_section(transfer_in, transfer_out))
         sections.append(self._monthly_section())
 
         return "\n\n".join(sections)
 
     # ── Overview ────────────────────────────────────────────────────
 
-    def _overview_section(self, card_txns, invest_txns) -> str:
-        card_out = sum(abs(t["normalized_amount"]) for t in card_txns if t["normalized_amount"] < 0)
-        card_in = sum(t["normalized_amount"] for t in card_txns if t["normalized_amount"] > 0)
+    def _overview_section(self, card_txns, invest_txns, transfer_in_txns, transfer_out_txns) -> str:
+        # Card
+        card_spent = sum(abs(t["normalized_amount"]) for t in card_txns if t["normalized_amount"] < 0)
+        card_refund = sum(t["normalized_amount"] for t in card_txns if t["normalized_amount"] > 0)
+        card_net = card_spent - card_refund
 
+        # Investment
         invest_out = sum(abs(t["normalized_amount"]) for t in invest_txns if t["normalized_amount"] < 0)
         invest_in = sum(t["normalized_amount"] for t in invest_txns if t["normalized_amount"] > 0)
+        invest_net = invest_out - invest_in  # Net Invested (Cash -> Asset)
 
-        total_out = card_out + invest_out
-        total_in = card_in + invest_in
+        # Transfers (Cash Flow)
+        cash_in = sum(t["normalized_amount"] for t in transfer_in_txns)
+        cash_out = sum(abs(t["normalized_amount"]) for t in transfer_out_txns)
+        net_cash_flow = cash_in - cash_out  # Net Cash Added to Account
 
         lines = [
             "═══════════════════════════════════════",
             "       PORTFOLIO OVERVIEW (EUR)",
             "═══════════════════════════════════════",
             f"  Total Transactions:  {len(self.transactions):,}",
-            f"  Card Transactions:   {len(card_txns):,}",
-            f"  Investment Events:   {len(invest_txns):,}",
             "",
-            f"  Total Outflow:       {total_out:>12,.2f}",
-            f"  Total Inflow:        {total_in:>12,.2f}",
-            f"  Net:                 {total_in - total_out:>12,.2f}",
+            "  ── SPENDING (CARD) ──",
+            f"  Gross Spent:         {card_spent:>12,.2f}",
+            f"  Refunds:             {card_refund:>12,.2f}",
+            f"  Net Spent:           {card_net:>12,.2f}",
+            "",
+            "  ── INVESTMENTS ──",
+            f"  Buys (Cash Out):     {invest_out:>12,.2f}",
+            f"  Sells/Divs (Cash In):{invest_in:>12,.2f}",
+            f"  Net Invested:        {invest_net:>12,.2f}",
+            "",
+            "  ── CASH FLOW ──",
+            f"  Deposits:            {cash_in:>12,.2f}",
+            f"  Withdrawals:         {cash_out:>12,.2f}",
+            f"  Net Cash Added:      {net_cash_flow:>12,.2f}",
             "═══════════════════════════════════════",
         ]
         return "\n".join(lines)
@@ -105,9 +124,7 @@ class PortfolioAnalyzer:
                 by_category[cat]["in"] += val
 
         lines = [
-            "── CARD SPENDING ─────────────────────",
-            f"  Gross Spent:   {total_spent:>10,.2f}",
-            f"  Refunds:       {total_refund:>10,.2f}",
+            "── CARD SPENDING DETAILS ────────────────",
             f"  Net Spent:     {net:>10,.2f}",
             "",
             "  By Category:",
@@ -121,6 +138,115 @@ class PortfolioAnalyzer:
         for i, (m, a) in enumerate(top, 1):
             lines.append(f"    {i:>2}. {m:<30s} {a:>10,.2f}")
 
+        return "\n".join(lines)
+
+    # ── Subscriptions ───────────────────────────────────────────────
+
+    def _subscription_section(self, card_txns) -> str:
+        """
+        Heuristic detection of recurring monthly payments.
+        Criteria:
+        - Same merchant
+        - At least 2 transactions
+        - Similar amount (within 10%)
+        - Interval ~28-32 days
+        """
+        if not card_txns:
+            return ""
+
+        # Group by merchant
+        by_merchant = defaultdict(list)
+        for t in card_txns:
+            # Only consider negative amounts (payments)
+            if t["normalized_amount"] < 0:
+                by_merchant[t["merchant"]].append(t)
+
+        potential_subs = []
+
+        for merchant, txns in by_merchant.items():
+            if len(txns) < 2:
+                continue
+
+            # Sort by date
+            txns.sort(key=lambda x: x.get("timestamp", 0))
+
+            amounts = [abs(t["normalized_amount"]) for t in txns]
+            avg_amount = sum(amounts) / len(amounts)
+
+            # Check amount consistency (all within 10% of average)
+            is_consistent_amount = all(0.9 * avg_amount <= a <= 1.1 * avg_amount for a in amounts)
+            
+            if not is_consistent_amount:
+                continue
+
+            # Check intervals
+            timestamps = []
+            for t in txns:
+                ts = t.get("timestamp", 0)
+                if isinstance(ts, str):
+                    try:
+                        # Normalize ISO string to timestamp
+                        ts = ts.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(ts)
+                        timestamps.append(dt.timestamp())
+                    except ValueError:
+                        pass
+                elif isinstance(ts, (int, float)):
+                    if ts > 10**11: # Millis
+                        timestamps.append(ts / 1000)
+                    else:
+                        timestamps.append(ts)
+            
+            if len(timestamps) < 2:
+                continue
+
+            intervals = []
+            for i in range(1, len(timestamps)):
+                diff_days = (timestamps[i] - timestamps[i-1]) / 86400
+                intervals.append(diff_days)
+
+            if not intervals:
+                continue
+
+            avg_interval = sum(intervals) / len(intervals)
+            
+            # Monthly (25-35 days) or Yearly (360-370 days)
+            is_monthly = 25 <= avg_interval <= 35
+            is_yearly = 360 <= avg_interval <= 370
+
+            if is_monthly or is_yearly:
+                freq = "Monthly" if is_monthly else "Yearly"
+                last_date = _parse_month(txns[-1]) # Just show YYYY-MM
+                potential_subs.append({
+                    "merchant": merchant,
+                    "amount": avg_amount,
+                    "frequency": freq,
+                    "count": len(txns),
+                    "last_seen": last_date
+                })
+
+        if not potential_subs:
+            return ""
+
+        # Sort by amount desc
+        potential_subs.sort(key=lambda x: x["amount"], reverse=True)
+
+        lines = [
+            "── POTENTIAL SUBSCRIPTIONS ──────────────",
+            f"  {'Merchant':<30s}  {'Amount':>10s}  {'Freq':<8s}  {'Last'}",
+            "  " + "─" * 60,
+        ]
+        
+        total_monthly = 0
+        for sub in potential_subs:
+            lines.append(f"  {sub['merchant']:<30s}  {sub['amount']:>10.2f}  {sub['frequency']:<8s}  {sub['last_seen']}")
+            if sub['frequency'] == "Monthly":
+                total_monthly += sub["amount"]
+            elif sub['frequency'] == "Yearly":
+                total_monthly += sub["amount"] / 12
+
+        lines.append("")
+        lines.append(f"  Est. Monthly Cost: {total_monthly:>.2f}")
         return "\n".join(lines)
 
     # ── Investments ─────────────────────────────────────────────────
@@ -157,9 +283,7 @@ class PortfolioAnalyzer:
         top_assets = sorted(by_asset.items(), key=lambda x: x[1]["out"], reverse=True)[:10]
 
         lines = [
-            "── INVESTMENTS ──────────────────────",
-            f"  Total Invested:  {total_invested:>12,.2f}",
-            f"  Total Received:  {total_received:>12,.2f}",
+            "── INVESTMENT DETAILS ───────────────────",
             f"  Net Invested:    {total_invested - total_received:>12,.2f}",
             "",
             "  By Type:",
@@ -175,10 +299,27 @@ class PortfolioAnalyzer:
 
         return "\n".join(lines)
 
+    # ── Transfers ───────────────────────────────────────────────────
+
+    def _transfer_section(self, t_in, t_out) -> str:
+        if not t_in and not t_out:
+            return ""
+
+        total_in = sum(t["normalized_amount"] for t in t_in)
+        total_out = sum(abs(t["normalized_amount"]) for t in t_out)
+
+        lines = [
+            "── TRANSFERS ────────────────────────────",
+            f"  Deposits:      {total_in:>12,.2f}  ({len(t_in)})",
+            f"  Withdrawals:   {total_out:>12,.2f}  ({len(t_out)})",
+            f"  Net Flow:      {total_in - total_out:>12,.2f}",
+        ]
+        return "\n".join(lines)
+
     # ── Monthly ─────────────────────────────────────────────────────
 
     def _monthly_section(self) -> str:
-        by_month = defaultdict(lambda: {"card_out": 0.0, "card_in": 0.0, "invest_out": 0.0, "invest_in": 0.0})
+        by_month = defaultdict(lambda: {"card_net": 0.0, "invest_net": 0.0, "cash_net": 0.0})
 
         for t in self.transactions:
             month = _parse_month(t)
@@ -186,25 +327,66 @@ class PortfolioAnalyzer:
             cat = t.get("category", "other")
 
             if cat == "card":
-                if val < 0:
-                    by_month[month]["card_out"] += abs(val)
-                else:
-                    by_month[month]["card_in"] += val
+                by_month[month]["card_net"] += val # Negative = spent
             elif cat == "investment":
-                if val < 0:
-                    by_month[month]["invest_out"] += abs(val)
-                else:
-                    by_month[month]["invest_in"] += val
+                by_month[month]["invest_net"] += val # Negative = bought
+            elif cat in ("transfer_in", "transfer_out"):
+                by_month[month]["cash_net"] += val
 
         lines = [
             "── MONTHLY BREAKDOWN ────────────────",
-            f"  {'Month':<10s}  {'Card Spent':>12s}  {'Card Rfnd':>10s}  {'Invested':>12s}  {'Received':>10s}",
+            f"  {'Month':<10s}  {'Card Net':>12s}  {'Invest Net':>12s}  {'Cash Net':>12s}",
             "  " + "─" * 60,
         ]
         for month in sorted(by_month.keys()):
             d = by_month[month]
+            # Card Net: Show POSITIVE for spending (easier to read) -> -1 * val
+            # Actually, "Card Net" usually implies spending. Let's show "Net Spent" as positive.
+            card_spent_display = -d['card_net'] 
+            
+            # Invest Net: Show "Net Invested" (Out - In) -> -1 * val
+            invest_net_display = -d['invest_net']
+
             lines.append(
-                f"  {month:<10s}  {d['card_out']:>12,.2f}  {d['card_in']:>10,.2f}  {d['invest_out']:>12,.2f}  {d['invest_in']:>10,.2f}"
+                f"  {month:<10s}  {card_spent_display:>12,.2f}  {invest_net_display:>12,.2f}  {d['cash_net']:>12,.2f}"
             )
 
+        # Add ASCII chart for card spending
+        lines.append("")
+        lines.append(self._spending_chart(by_month))
+
+        return "\n".join(lines)
+
+    def _spending_chart(self, by_month: dict, bar_width: int = 40) -> str:
+        """Generate a simple ASCII bar chart for monthly card spending."""
+        sorted_months = sorted(by_month.keys())
+        if not sorted_months:
+            return ""
+        
+        # Get last 12 months of spending
+        recent_months = sorted_months[-12:]
+        spending_values = [-by_month[m]["card_net"] for m in recent_months]  # Positive = spent
+        
+        max_spend = max(spending_values) if spending_values else 1
+        if max_spend <= 0:
+            return ""
+        
+        lines = [
+            "",
+            "  ── MONTHLY SPENDING TREND (Last 12 Months) ──",
+            ""
+        ]
+        
+        for i, month in enumerate(recent_months):
+            spent = spending_values[i]
+            bar_len = int((spent / max_spend) * bar_width) if max_spend > 0 else 0
+            bar = "█" * bar_len
+            # Shorten month display: 2024-01 -> Jan'24
+            try:
+                short_month = datetime.strptime(month, "%Y-%m").strftime("%b'%y")
+            except:
+                short_month = month[:7]
+            lines.append(f"  {short_month:<7} │{bar:<{bar_width}} {spent:>8,.0f}€")
+        
+        lines.append(f"          └{'─' * bar_width}┘")
         return "\n".join(lines)

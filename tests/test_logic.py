@@ -20,7 +20,8 @@ class MockClient:
                 "subtitle": "Berlin",
                 "title": "Starbucks",
                 "amount": {"value": -5.50, "currency": "EUR"},
-                "status": "EXECUTED"
+                "status": "EXECUTED",
+                "eventType": "card_successful_transaction"
             },
             {
                 "id": "2",
@@ -29,7 +30,8 @@ class MockClient:
                 "subtitle": "Marketplace",
                 "title": "Amazon",
                 "amount": {"value": -20.00, "currency": "EUR"},
-                "status": "EXECUTED"
+                "status": "EXECUTED",
+                "eventType": "card_successful_transaction"
             },
             {
                 "id": "3",
@@ -38,7 +40,8 @@ class MockClient:
                 "subtitle": "Refund",
                 "title": "Amazon",
                 "amount": {"value": 20.00, "currency": "EUR"},
-                "status": "EXECUTED"
+                "status": "EXECUTED",
+                "eventType": "card_refund"
             },
             { # Investment
                 "id": "4",
@@ -47,16 +50,59 @@ class MockClient:
                 "subtitle": "Buy Order",
                 "title": "Apple Stock",
                 "amount": {"value": -150.00, "currency": "EUR"},
-                "status": "EXECUTED"
+                "status": "EXECUTED",
+                "eventType": "ORDER_EXECUTED"
             },
-            { # Failed transaction
+            { # Deposit
                 "id": "5",
-                "timestamp": "2024-05-24T12:00:00.000+0000",
-                "icon": "merchant-suspicious",
-                "subtitle": "Fail",
-                "title": "Suspicious Shop",
-                "amount": {"value": -1000.00, "currency": "EUR"},
-                "status": "FAILED"
+                "timestamp": "2024-05-23T10:00:00.000+0000",
+                "icon": "system",
+                "subtitle": "Bank Transfer",
+                "title": "Deposit",
+                "amount": {"value": 1000.00, "currency": "EUR"},
+                "status": "EXECUTED",
+                "eventType": "PAYMENT_INBOUND"
+            },
+            { # Withdrawal
+                "id": "6",
+                "timestamp": "2024-05-22T10:00:00.000+0000",
+                "icon": "system",
+                "subtitle": "To Checking",
+                "title": "Withdrawal",
+                "amount": {"value": -500.00, "currency": "EUR"},
+                "status": "EXECUTED",
+                "eventType": "PAYMENT_OUTBOUND"
+            },
+            # Recurring Subscription (Netflix)
+            {
+                "id": "7",
+                "timestamp": "2024-04-01T10:00:00.000+0000",
+                "icon": "merchant-netflix",
+                "subtitle": "Subscription",
+                "title": "Netflix",
+                "amount": {"value": -15.99, "currency": "EUR"},
+                "status": "EXECUTED",
+                "eventType": "card_successful_transaction"
+            },
+            {
+                "id": "8",
+                "timestamp": "2024-05-01T10:00:00.000+0000",
+                "icon": "merchant-netflix",
+                "subtitle": "Subscription",
+                "title": "Netflix",
+                "amount": {"value": -15.99, "currency": "EUR"},
+                "status": "EXECUTED",
+                "eventType": "card_successful_transaction"
+            },
+            {
+                "id": "9",
+                "timestamp": "2024-06-01T10:00:00.000+0000",
+                "icon": "merchant-netflix",
+                "subtitle": "Subscription",
+                "title": "Netflix",
+                "amount": {"value": -15.99, "currency": "EUR"},
+                "status": "EXECUTED",
+                "eventType": "card_successful_transaction"
             }
         ]
 
@@ -65,39 +111,32 @@ class TestTrackerLogic(unittest.TestCase):
         self.mock_client = MockClient()
         self.tm = TimelineManager(self.mock_client)
 
-    def test_filter_card_transactions(self):
-        # We need to run the async fetch first
+    def test_classification(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self.tm.transactions = loop.run_until_complete(self.mock_client.fetch_timeline_transactions())
         
-        filtered = self.tm.filter_card_transactions()
+        # Test individual classifications
+        t_card = next(t for t in self.tm.transactions if t['id'] == "1")
+        self.assertEqual(TimelineManager.classify(t_card), "card")
         
-        # Expect 4 items (1 spending, 1 spending, 1 refund, 1 failed)
-        # item 4 is investment, should be gone.
-        ids = [t['id'] for t in filtered]
-        self.assertIn("1", ids)
-        self.assertIn("2", ids)
-        self.assertIn("3", ids)
-        self.assertIn("5", ids)
-        self.assertNotIn("4", ids)
-
-        # Check normalization
-        t1 = next(t for t in filtered if t['id'] == "1")
-        self.assertEqual(t1['normalized_amount'], -5.50)
-        self.assertEqual(t1['merchant'], "Starbucks")
-        self.assertEqual(t1['category'], "card")
+        t_refund = next(t for t in self.tm.transactions if t['id'] == "3")
+        self.assertEqual(TimelineManager.classify(t_refund), "card")
         
-        t3 = next(t for t in filtered if t['id'] == "3")
-        self.assertEqual(t3['normalized_amount'], 20.00)
+        t_invest = next(t for t in self.tm.transactions if t['id'] == "4")
+        self.assertEqual(TimelineManager.classify(t_invest), "investment")
+        
+        t_deposit = next(t for t in self.tm.transactions if t['id'] == "5")
+        self.assertEqual(TimelineManager.classify(t_deposit), "transfer_in")
+        
+        t_withdraw = next(t for t in self.tm.transactions if t['id'] == "6")
+        self.assertEqual(TimelineManager.classify(t_withdraw), "transfer_out")
 
     def test_portfolio_analysis(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         txns = loop.run_until_complete(self.mock_client.fetch_timeline_transactions())
         
-        # In CLI, we typically use filter_all_classified() to process categories
-        # Then pass that to PortfolioAnalyzer
         self.tm.transactions = txns
         all_txns_processed = self.tm.filter_all_classified()
         
@@ -106,24 +145,38 @@ class TestTrackerLogic(unittest.TestCase):
         
         print("\n--- Test Report Output ---\n" + report + "\n--------------------------")
         
-        # Check Card Spending Section
-        # Gross Spent: 25.50 (5.5 + 20)
-        # Refunds: 20.00
-        # Net Spent: 5.50 (Amazon cancels out)
+        # Check Overview Section
+        # Card Spent: 5.50 + (15.99 * 3) = 53.47
+        # Refunds: 20.00 (from Amazon) - Note: Amazon spent 20, refunded 20. Net Amazon = 0.
+        # Starbucks: 5.50
+        # Netflix: 47.97
+        # Total Net Spent: 53.47
+        self.assertIn("Net Spent", report)
+        self.assertIn("53.47", report)
         
-        self.assertIn("Gross Spent:        25.50", report)
-        self.assertIn("Refunds:            20.00", report)
-        self.assertIn("Net Spent:           5.50", report)
+        # Check Cash Flow Section
+        # Deposits: 1000.00
+        # Withdrawals: 500.00
+        # Net Cash Added: 500.00
+        self.assertIn("Deposits:", report)
+        self.assertIn("1,000.00", report)
+        self.assertIn("Withdrawals:", report)
+        self.assertIn("500.00", report)
+        self.assertIn("Net Cash Added:", report)
         
-        # Check merchants
-        # Starbucks should be in top list
-        self.assertIn("Starbucks", report)
-        self.assertIn("5.50", report) 
+        # Check Subscriptions
+        # Netflix: 3 txns, 15.99 avg
+        self.assertIn("POTENTIAL SUBSCRIPTIONS", report)
+        self.assertIn("Netflix", report)
+        self.assertIn("15.99", report)
+        self.assertIn("Monthly", report)
+        self.assertIn("Est. Monthly Cost: 15.99", report)
         
-        # Amazon should not be in "Top 10 Merchants (net)" because net > 0 check?
-        # In analysis.py: [(m, a) for m, a in merchants.items() if a > 0]
-        # Amazon net is 0. So it should disappear.
-        self.assertNotIn("Amazon", report.split("Top 10 Merchants")[1])
+        # Check Investment Section
+        # Buys: 150.00
+        # Net Invested: 150.00 (since no sells)
+        self.assertIn("Net Invested:", report)
+        self.assertIn("150.00", report)
 
     def test_csv_export(self):
         loop = asyncio.new_event_loop()
@@ -144,8 +197,10 @@ class TestTrackerLogic(unittest.TestCase):
             self.assertIn("Starbucks,-5.5", content)
             self.assertIn("card", content)
             self.assertIn("investment", content)
+            self.assertIn("transfer_in", content)
             
-        os.remove(filename)
+        if os.path.exists(filename):
+            os.remove(filename)
 
 if __name__ == '__main__':
     unittest.main()

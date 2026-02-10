@@ -13,13 +13,21 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - Validated field mapping against Reference Go implementation.
 - **Iteration 5 (Analysis):** **Completed (2026-02-10).**
   - Implemented `PortfolioAnalyzer` in `src/tracker/analysis.py`.
-  - Provides Card Spending summary (Net Spent, Refunds, Top Merchants, Category breakdown).
-  - Provides Investment summary (Net Invested, Top Assets).
-  - Monthly breakdown of In/Out for both Cards and Investments.
+  - **Spending Analysis:** Net Spent, Refunds, Merchant/Category breakdown.
+  - **Cash Flow Analysis:** Tracks Deposits vs Withdrawals separate from Investments.
+  - **Profit/Loss Proxy:** Tracks "Net Invested" (Cash Flow into Assets) vs Current Value (future todo).
+  - Monthly breakdown of Card, Investment, and Cash Flow.
 - **Iteration 6 (Refinement):** **Completed (2026-02-10).**
   - Improved WebSocket stability (timeout handling, connection checks, graceful error recovery).
   - Updated to use `timelineDetailV2` for fetching transaction details, matching the official app's behavior.
   - Added robust response filtering to ignore echo/heartbeat messages.
+- **Iteration 7 (Spending Intelligence):** **Completed (2026-02-10).**
+  - **Subscription Detection:** Heuristic algorithm to identify recurring monthly/yearly payments (Netflix, Spotify, etc.) and estimate monthly fixed costs.
+  - **Robust Timestamp Parsing:** `PortfolioAnalyzer` now handles both numeric (millisecond) and ISO string timestamps seamlessly, improving testability and robustness against API changes.
+  - **Enhanced Reporting:** New "Potential Subscriptions" section in the CLI report.
+- **Iteration 8 (Visualization):** **Completed (2026-02-11).**
+  - **ASCII Spending Chart:** Monthly spending trend visualization showing last 12 months as horizontal bar chart.
+  - Clean formatting with abbreviated month labels and auto-scaling bars.
 
 ## Usage
 

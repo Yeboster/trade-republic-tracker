@@ -194,25 +194,25 @@ class TradeRepublicClient:
         Waits for a response matching sub_id. Returns parsed JSON or None.
         Ignores unrelated messages (echo, other subs).
         """
-        start_time = asyncio.get_running_loop().time()
+        end_time = asyncio.get_running_loop().time() + timeout
         
         while True:
-            # Check timeout manually since we loop
-            if asyncio.get_running_loop().time() - start_time > timeout:
+            remaining = end_time - asyncio.get_running_loop().time()
+            if remaining <= 0:
                 logger.error(f"Timeout waiting for sub {sub_id} response")
                 return None
 
             try:
-                # Use a small timeout for each recv to allow checking total timeout
-                response = await asyncio.wait_for(self.ws.recv(), timeout=1.0)
+                # Wait for next message with remaining timeout
+                response = await asyncio.wait_for(self.ws.recv(), timeout=remaining)
             except asyncio.TimeoutError:
-                continue
+                logger.error(f"Timeout waiting for sub {sub_id} response")
+                return None
             except Exception as e:
                 logger.error(f"WebSocket receive error: {e}")
                 return None
                 
             if response.startswith("echo"):
-                # Echo messages are heartbeats or confirmations, safe to ignore for now
                 continue
 
             parts = response.split(maxsplit=2)
@@ -225,29 +225,33 @@ class TradeRepublicClient:
                 continue
                 
             if resp_id != sub_id:
-                # Message for another subscription, ignore
                 continue
                 
             state = parts[1]
             
             if state == "C":
-                # Completed/Closed subscription
-                continue
+                # Completed/Closed subscription - usually means end of data or no data
+                # But for timeline, we expect 'A' (Added) first. 
+                # If we get 'C' without 'A', it might be empty?
+                # Let's keep waiting if we haven't seen 'A'? 
+                # Actually, for one-shot request/response, 'A' comes then 'C'?
+                # Or just 'A'. 
+                # TR protocol usually: A (data) -> (maybe updates) -> C (closed by server? usually not).
+                # If we see C, it's done.
+                logger.info(f"Sub {sub_id} closed by server.")
+                return None
             elif state == "E":
-                # Error
                 error_msg = parts[2] if len(parts) > 2 else "Unknown error"
                 logger.error(f"WS Error sub {sub_id}: {error_msg}")
                 return None
             elif state == "A":
-                # Added (Initial data)
                 if len(parts) > 2:
                     return json.loads(parts[2])
                 return None
             elif state == "D":
-                # Deleted (Update) - usually not initial response
                 continue
             else:
-                # Update (U) or other
+                # Update (U)
                 if len(parts) > 2:
                     return json.loads(parts[2])
                 return None

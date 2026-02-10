@@ -29,7 +29,7 @@ class TimelineManager:
     @staticmethod
     def classify(txn: Dict) -> str:
         """
-        Returns one of: 'card', 'investment', 'transfer', 'other'.
+        Returns one of: 'card', 'investment', 'transfer_in', 'transfer_out', 'other'.
         
         Uses 'eventType' from JSON if available (most reliable),
         falling back to icon/subtitle heuristics.
@@ -37,12 +37,19 @@ class TimelineManager:
         event_type = txn.get("eventType") or ""
         icon = txn.get("icon") or ""
         subtitle = (txn.get("subtitle") or "").strip().lower()
+        title = (txn.get("title") or "").strip().lower()
         cash_account = txn.get("cashAccountNumber")
         amount_val = (txn.get("amount") or {}).get("value", 0)
 
         # 1. Strong signal: eventType
-        if event_type == "card_successful_transaction":
+        if event_type in ("card_successful_transaction", "card_failed_transaction", "card_refund", "card_successful_verification"):
             return "card"
+        
+        if event_type in ("PAYMENT_INBOUND", "PAYMENT_INBOUND_SEPA_DIRECT_DEBIT", "INCOMING_TRANSFER", "INCOMING_TRANSFER_DELEGATION", "CREDIT"):
+            return "transfer_in"
+            
+        if event_type in ("PAYMENT_OUTBOUND", "OUTGOING_TRANSFER_DELEGATION"):
+            return "transfer_out"
         
         if event_type in (
             "ORDER_EXECUTED", 
@@ -53,7 +60,10 @@ class TimelineManager:
             "DIVIDEND_PAYOUT",
             "trading_savingsplan_executed",
             "ssp_corporate_action_invoice_cash",
-            "TRADE_INVOICE"
+            "TRADE_INVOICE",
+            "benefits_saveback_execution",
+            "benefits_spare_change_execution",
+            "timeline_legacy_migrated_events" # Often old trades
         ):
             return "investment"
 
@@ -62,6 +72,19 @@ class TimelineManager:
             return "card"
 
         # 3. Heuristics for older/incomplete data
+
+        # Explicit transfer keywords in title/subtitle
+        if "transfer" in title or "transfer" in subtitle:
+            if amount_val > 0:
+                return "transfer_in"
+            else:
+                return "transfer_out"
+                
+        if "deposit" in title or "deposit" in subtitle:
+             return "transfer_in"
+             
+        if "withdrawal" in title or "withdrawal" in subtitle:
+             return "transfer_out"
 
         # Investment: known subtitles
         if subtitle and any(s in subtitle for s in INVESTMENT_SUBTITLES):

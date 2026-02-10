@@ -1,25 +1,24 @@
 [TRADE REPUBLIC RESEARCH]
 
 **Summary:**
-Iteration 4 & 5 Complete. The Python tracker in `projects/trade-republic-tracker` now fully supports Auth, WebSocket streaming, Card Transaction filtering, and Spending Analysis (with Merchant Categorization). Logic verified via new unit tests.
+Iteration 8 (Visualization) Complete. Added ASCII bar chart for monthly card spending trends, making it easier to spot spending patterns at a glance.
 
 **Status Update:**
-1.  **Card Focus (Iteration 3 & 4):**
-    -   Verified `card_successful_transaction` vs `ORDER_EXECUTED` distinction handling.
-    -   Implemented `TimelineManager` to normalize fields (`merchant`, `spending_category`, `normalized_amount` which accounts for refunds).
-    -   Added merchant-to-category mapping (CSV-driven) using `data/categories.csv`.
-2.  **Analysis (Iteration 5):**
-    -   Implemented `PortfolioAnalyzer`: Generates a report with Net Spending (Gross - Refunds), Top 10 Merchants, and Monthly Breakdown.
-    -   Added "Net Invested" (Cash Flow) calculation for investments.
-    -   **P/L Note:** Full "Unrealized P/L" requires instrument pricing history which is out of scope for transaction-only parsing, but "Net Invested" accurately tracks cash flows.
-3.  **Verification:**
-    -   Created `tests/test_logic.py` to verify filtering, normalization, and report generation without requiring live credentials.
-    -   Tests confirm that refunds correctly offset spending in the "Net Spent" total.
+1.  **ASCII Spending Chart (Iteration 8):**
+    -   Added `_spending_chart()` method to `PortfolioAnalyzer`.
+    -   Shows last 12 months of card spending as horizontal bar chart.
+    -   Clean formatting with month labels (e.g., "Jan'24") and EUR amounts.
+    -   Auto-scales bars based on max spending in the period.
+2.  **Prior Work (Iteration 7):**
+    -   Subscription Detection: Groups transactions by merchant, checks for consistent amounts (+/- 10%) and regular intervals (monthly/yearly).
+    -   Reporting: "Potential Subscriptions" section with frequency and estimated monthly cost.
+    -   Robust timestamp handling (milliseconds and ISO strings).
 
 **Next Steps:**
--   **User Testing:** Run `python3 -m src.tracker.cli` with real credentials to verify against live data.
--   **Refinement:** Improve WebSocket subscription handling (currently uses a basic timeout loop which may be fragile on slow connections).
+-   **User Testing:** Run against real data to validate subscription heuristics.
+-   **Weekly Detection:** Extend subscription detection to weekly recurring payments.
+-   **Category Refinement:** Continue refining `data/categories.csv` based on real merchant names.
 
 **Links:**
--   Code: `projects/trade-republic-tracker/src/tracker/`
+-   Code: `projects/trade-republic-tracker/src/tracker/analysis.py`
 -   Tests: `projects/trade-republic-tracker/tests/test_logic.py`
