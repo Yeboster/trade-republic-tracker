@@ -5,55 +5,52 @@ import os
 import sys
 from .client import TradeRepublicClient
 from .timeline import TimelineManager
-from .analysis import SpendingAnalyzer
+from .analysis import PortfolioAnalyzer
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Main")
 
+
 async def main():
-    parser = argparse.ArgumentParser(description="Trade Republic Card Transaction Tracker")
+    parser = argparse.ArgumentParser(description="Trade Republic Portfolio Tracker")
     parser.add_argument("--phone", help="Phone number (international format)")
     parser.add_argument("--pin", help="PIN")
-    parser.add_argument("--limit", type=int, default=50, help="Number of transactions to fetch")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Max transactions to fetch (0 = all, default: all)")
     parser.add_argument("--output", default="transactions.csv", help="Output CSV file")
-    # For testing/CI reuse
-    parser.add_argument("--otp", help="OTP code (if you know it ahead of time, rarely works due to expiry)")
+    parser.add_argument("--otp", help="OTP code")
+    parser.add_argument("--card-only", action="store_true",
+                        help="Only show/export card transactions")
+    parser.add_argument("--invest-only", action="store_true",
+                        help="Only show/export investment transactions")
     
     args = parser.parse_args()
 
-    # Load credentials from env if not provided
     phone = args.phone or os.environ.get("TR_PHONE")
     pin = args.pin or os.environ.get("TR_PIN")
     otp_env = os.environ.get("TR_OTP")
 
     if not phone or not pin:
-        logger.error("Phone number and PIN are required. Set TR_PHONE and TR_PIN env vars or use arguments.")
+        logger.error("Phone and PIN required. Set TR_PHONE/TR_PIN or use --phone/--pin.")
         return
 
     client = TradeRepublicClient(phone_number=phone, pin=pin)
-    
-    # Try to load existing tokens 
     client.load_tokens()
 
     try:
-        # Check if we need to login
+        # ── Auth ────────────────────────────────────────────────
         if not client.session_token:
-            logger.info("No session token found. Logging in...")
+            logger.info("No session token. Logging in...")
             await asyncio.to_thread(client.login)
-            
-            # Interactive OTP
             otp = args.otp or otp_env
             if not otp:
                 if sys.stdin.isatty():
                     otp = input(f"Enter OTP sent to {phone}: ")
                 else:
-                    logger.error("OTP required and no TTY available. Set --otp or TR_OTP.")
+                    logger.error("OTP required. Set --otp or TR_OTP.")
                     return
-            
             await asyncio.to_thread(client.verify_otp, otp)
         else:
-            # Attempt refresh
             try:
                 await asyncio.to_thread(client.refresh_session)
             except Exception as e:
@@ -61,44 +58,50 @@ async def main():
                 await asyncio.to_thread(client.login)
                 otp = args.otp or otp_env
                 if not otp:
-                     if sys.stdin.isatty():
+                    if sys.stdin.isatty():
                         otp = input(f"Enter OTP sent to {phone}: ")
-                     else:
-                        logger.error("OTP required and no TTY available.")
+                    else:
+                        logger.error("OTP required. Set --otp or TR_OTP.")
                         return
                 await asyncio.to_thread(client.verify_otp, otp)
 
+        # ── Fetch ───────────────────────────────────────────────
         timeline = TimelineManager(client)
         
-        # 3. Fetch Transactions
-        logger.info(f"Fetching last {args.limit} transactions...")
+        limit_label = "all" if args.limit == 0 else str(args.limit)
+        logger.info(f"Fetching transactions (limit: {limit_label})...")
         transactions = await timeline.fetch_transactions(limit=args.limit)
-        
-        # 4. Filter Card Transactions
-        card_txns = timeline.filter_card_transactions()
-        logger.info(f"Found {len(card_txns)} card transactions out of {len(transactions)} total.")
-        
-        print("\n--- Card Transactions Preview ---")
-        for txn in card_txns[:5]:
-            amt = txn.get('amount', {}).get('value')
-            curr = txn.get('amount', {}).get('currency')
-            print(f"{txn['timestamp']} | {txn['title']} | {amt} {curr} | {txn.get('status')}")
-        print("---------------------------------\n")
+        logger.info(f"Fetched {len(transactions)} total transactions.")
 
-        # 5. Analysis
-        analyzer = SpendingAnalyzer(card_txns)
+        # ── Classify ────────────────────────────────────────────
+        all_classified = timeline.filter_all_classified()
+        
+        card_count = sum(1 for t in all_classified if t["category"] == "card")
+        invest_count = sum(1 for t in all_classified if t["category"] == "investment")
+        other_count = sum(1 for t in all_classified if t["category"] == "other")
+        
+        logger.info(f"Classified: {card_count} card, {invest_count} investment, {other_count} other")
+
+        # ── Analysis ────────────────────────────────────────────
+        analyzer = PortfolioAnalyzer(all_classified)
         report = analyzer.generate_report()
-        print(report)
-        print("\n---------------------------------\n")
+        print(f"\n{report}\n")
 
-        # 6. Export
-        timeline.export_to_csv(args.output)
-        logger.info(f"Done. Check {args.output}")
+        # ── Export ──────────────────────────────────────────────
+        categories = None
+        if args.card_only:
+            categories = ["card"]
+        elif args.invest_only:
+            categories = ["investment"]
+
+        timeline.export_to_csv(args.output, categories=categories)
+        logger.info(f"Done. Exported to {args.output}")
 
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
     finally:
         await client.close()
+
 
 if __name__ == "__main__":
     try:

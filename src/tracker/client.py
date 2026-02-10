@@ -6,7 +6,6 @@ import asyncio
 import websockets
 from typing import Optional, Dict, List, Any
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -15,8 +14,7 @@ class TradeRepublicClient:
     WS_URL = "wss://api.traderepublic.com/"
     USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
-    # WebSocket Connect Message (Platform info is crucial)
-    CONNECT_MSG = "connect 31 {\"locale\":\"en\",\"platformId\":\"webtrading\",\"platformVersion\":\"chrome - 120.0.0\",\"clientId\":\"app.traderepublic.com\",\"clientVersion\":\"3.174.0\"}"
+    CONNECT_MSG = 'connect 31 {"locale":"en","platformId":"webtrading","platformVersion":"chrome - 120.0.0","clientId":"app.traderepublic.com","clientVersion":"3.174.0"}'
 
     def __init__(self, phone_number: str = None, pin: str = None):
         self.phone_number = phone_number
@@ -38,9 +36,6 @@ class TradeRepublicClient:
         self.sub_id_counter = 0
 
     def load_tokens(self):
-        """
-        Loads tokens from a local file.
-        """
         if os.path.exists(".tokens.json"):
             try:
                 with open(".tokens.json", "r") as f:
@@ -54,10 +49,6 @@ class TradeRepublicClient:
             logger.info("No token file found.")
 
     def login(self) -> str:
-        """
-        Initiates login flow.
-        Returns the process_id needed for OTP.
-        """
         if not self.phone_number or not self.pin:
             raise ValueError("Phone number and PIN required for login.")
         
@@ -70,74 +61,51 @@ class TradeRepublicClient:
         try:
             response = self.client.post("/auth/web/login", json=payload)
             response.raise_for_status()
-            
-            # Capture session token from cookies if present
             self._update_tokens_from_response(response)
-            
             data = response.json()
             self.process_id = data.get("processId")
-            
             logger.info(f"Login initiated. Process ID: {self.process_id}")
             return self.process_id
-            
         except httpx.HTTPStatusError as e:
             logger.error(f"Login failed: {e.response.text}")
             raise
 
     def verify_otp(self, otp: str):
-        """
-        Completes login flow with OTP.
-        """
         if not self.process_id:
             raise ValueError("No active login process. Call login() first.")
         
         endpoint = f"/auth/web/login/{self.process_id}/{otp}"
-        
-        logger.info(f"Verifying OTP for process {self.process_id}...")
+        logger.info("Verifying OTP...")
         try:
             response = self.client.post(endpoint)
             response.raise_for_status()
-            
             self._update_tokens_from_response(response)
-            
             if self.session_token and self.refresh_token:
-                logger.info("Login successful! Session and refresh tokens captured.")
+                logger.info("OTP verified successfully. Tokens received.")
                 self._save_tokens()
             else:
                 logger.warning("Login completed but tokens might be missing.")
-                
         except httpx.HTTPStatusError as e:
             logger.error(f"OTP verification failed: {e.response.text}")
             raise
 
     def refresh_session(self):
-        """
-        Refreshes the session token using the refresh token.
-        """
         if not self.refresh_token:
             logger.warning("No refresh token available.")
             return
-
         logger.info("Refreshing session...")
-        
         cookies = {"tr_refresh": self.refresh_token}
-        
         try:
             response = self.client.get("/auth/web/session", cookies=cookies)
             response.raise_for_status()
-            
             self._update_tokens_from_response(response)
             logger.info("Session refreshed.")
             self._save_tokens()
-            
         except httpx.HTTPStatusError as e:
             logger.error(f"Session refresh failed: {e.response.text}")
             raise
 
     def _update_tokens_from_response(self, response: httpx.Response):
-        """
-        Extracts tr_session and tr_refresh from cookies.
-        """
         for cookie in response.cookies.jar:
             if cookie.name == "tr_session":
                 self.session_token = cookie.value
@@ -145,20 +113,15 @@ class TradeRepublicClient:
                 self.refresh_token = cookie.value
 
     def _save_tokens(self):
-        """
-        Saves tokens to a local file (insecure, for MVP).
-        """
         tokens = {
             "session_token": self.session_token,
             "refresh_token": self.refresh_token
         }
         with open(".tokens.json", "w") as f:
             json.dump(tokens, f)
+        logger.info("Tokens saved to tokens.json")
 
     async def ws_connect(self):
-        """
-        Establishes WebSocket connection and performs handshake.
-        """
         if not self.session_token:
             raise ValueError("No session token. Log in first.")
 
@@ -168,7 +131,6 @@ class TradeRepublicClient:
                 "User-Agent": self.USER_AGENT,
                 "Origin": "https://app.traderepublic.com",
             }
-            # Pass session token as cookie
             if self.session_token:
                 extra_headers["Cookie"] = f"tr_session={self.session_token}"
 
@@ -176,8 +138,8 @@ class TradeRepublicClient:
                 self.WS_URL,
                 additional_headers=extra_headers,
             )
-            logger.info("Sent connect message.")
             await self.ws.send(self.CONNECT_MSG)
+            logger.info("Sent connect message.")
             
             response = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
             logger.info(f"Handshake response: {response[:200]}")
@@ -187,7 +149,7 @@ class TradeRepublicClient:
                 logger.warning(f"Unexpected handshake response: {response}")
                 
         except asyncio.TimeoutError:
-            logger.error("WebSocket handshake timed out (10s). Server didn't respond to connect message.")
+            logger.error("WebSocket handshake timed out (10s).")
             raise
         except Exception as e:
             logger.error(f"WebSocket connection failed: {e}")
@@ -199,10 +161,6 @@ class TradeRepublicClient:
         self.client.close()
 
     async def _ws_subscribe(self, type_name: str, payload: Dict[str, Any] = None) -> int:
-        """
-        Sends a subscription request.
-        Returns the subscription ID.
-        """
         if not self.ws:
             await self.ws_connect()
             
@@ -214,27 +172,64 @@ class TradeRepublicClient:
         data["type"] = type_name
         
         msg = f"sub {sub_id} {json.dumps(data)}"
-        logger.debug(f"Sending sub: {msg}")
         await self.ws.send(msg)
-        
         return sub_id
 
     async def _ws_unsubscribe(self, sub_id: int):
-        """
-        Unsubscribes from a subscription.
-        """
         if not self.ws:
             return
-        
         data = {"token": self.session_token}
         msg = f"unsub {sub_id} {json.dumps(data)}"
-        logger.debug(f"Sending unsub: {sub_id}")
         await self.ws.send(msg)
 
-    async def fetch_timeline_transactions(self, limit: int = 100) -> List[Dict]:
+    async def _ws_receive_response(self, sub_id: int, timeout: float = 15.0) -> Optional[Dict]:
         """
-        Fetches timeline transactions.
-        Iterates through pages until limit is reached or no more data.
+        Waits for a response matching sub_id. Returns parsed JSON or None.
+        """
+        while True:
+            try:
+                response = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout waiting for sub {sub_id}")
+                return None
+                
+            if response.startswith("echo"):
+                continue
+
+            parts = response.split(maxsplit=2)
+            if len(parts) < 2:
+                continue
+                
+            try:
+                resp_id = int(parts[0])
+            except ValueError:
+                continue
+                
+            if resp_id != sub_id:
+                continue
+                
+            state = parts[1]
+            
+            if state == "C":
+                continue
+            elif state == "E":
+                logger.error(f"WS Error sub {sub_id}: {parts[2] if len(parts) > 2 else ''}")
+                return None
+            elif state == "A":
+                if len(parts) > 2:
+                    return json.loads(parts[2])
+                return None
+            elif state == "D":
+                continue
+            else:
+                if len(parts) > 2:
+                    return json.loads(parts[2])
+                return None
+
+    async def fetch_timeline_transactions(self, limit: int = 0) -> List[Dict]:
+        """
+        Fetches timeline transactions. 
+        limit=0 means fetch ALL (paginate until exhausted).
         """
         if not self.ws:
             await self.ws_connect()
@@ -242,13 +237,16 @@ class TradeRepublicClient:
         all_transactions = []
         cursor_after = None
         
-        max_loops = 50
-        loops = 0
+        # For 3k+ transactions, allow up to 200 pages (typical page ~20-50 items)
+        max_pages = 500
+        page = 0
         
-        logger.info("Starting timeline fetch...")
+        fetch_all = (limit == 0)
         
-        while loops < max_loops:
-            loops += 1
+        logger.info(f"Starting timeline fetch ({'all' if fetch_all else f'limit={limit}'})...")
+        
+        while page < max_pages:
+            page += 1
             
             payload = {}
             if cursor_after:
@@ -256,55 +254,8 @@ class TradeRepublicClient:
                 
             sub_id = await self._ws_subscribe("timelineTransactions", payload)
             
-            valid_data = None
-            
             try:
-                while True:
-                    try:
-                        response = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
-                    except asyncio.TimeoutError:
-                        logger.error("Timeout waiting for WebSocket response")
-                        break
-                        
-                    if response.startswith("echo"):
-                         continue
-
-                    parts = response.split(maxsplit=2)
-                    
-                    if len(parts) < 2:
-                        continue
-                        
-                    try:
-                        resp_id = int(parts[0])
-                    except ValueError:
-                        continue
-                        
-                    if resp_id != sub_id:
-                        continue
-                        
-                    state = parts[1]
-                    
-                    if state == "C": 
-                        # 'C'ontinue / Processing - ignore
-                        continue
-                    elif state == "E": 
-                        # 'E'rror
-                        logger.error(f"WebSocket Error for sub {sub_id}: {parts[2] if len(parts) > 2 else ''}")
-                        break
-                    elif state == "A": 
-                        # 'A'dd (Initial payload)
-                        if len(parts) > 2:
-                            valid_data = json.loads(parts[2])
-                        break
-                    elif state == "D":
-                         # 'D'elete (Update) - usually not initial payload
-                         pass
-                    else:
-                        # Fallback
-                        if len(parts) > 2:
-                             valid_data = json.loads(parts[2])
-                        break
-                
+                valid_data = await self._ws_receive_response(sub_id, timeout=15.0)
                 await self._ws_unsubscribe(sub_id)
                 
                 if not valid_data:
@@ -316,14 +267,20 @@ class TradeRepublicClient:
                 cursors = valid_data.get("cursors", {})
                 cursor_after = cursors.get("after")
                 
-                logger.info(f"Page {loops}: Fetched {len(items)} items. Total: {len(all_transactions)}")
+                logger.info(f"Page {page}: +{len(items)} items (total: {len(all_transactions)})")
                 
-                if not cursor_after or len(all_transactions) >= limit:
+                # Stop conditions
+                if not cursor_after:
+                    logger.info("No more pages.")
+                    break
+                if not fetch_all and len(all_transactions) >= limit:
                     break
                     
             except Exception as e:
-                logger.error(f"Error fetching page {loops}: {e}")
+                logger.error(f"Error fetching page {page}: {e}")
                 await self._ws_unsubscribe(sub_id)
                 break
-                
-        return all_transactions[:limit]
+        
+        if not fetch_all:
+            return all_transactions[:limit]
+        return all_transactions
