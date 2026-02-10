@@ -29,30 +29,45 @@ class TimelineManager:
     @staticmethod
     def classify(txn: Dict) -> str:
         """
-        Returns one of: 'card', 'investment', 'other'.
+        Returns one of: 'card', 'investment', 'transfer', 'other'.
         
-        Card transactions:
-          - icon contains "merchant-"
-          - OR: no subtitle, no cashAccountNumber, negative amount
-          
-        Investment transactions:
-          - icon contains an ISIN-like path (logos/<CODE>/v2)
-          - OR: subtitle matches known investment types
+        Uses 'eventType' from JSON if available (most reliable),
+        falling back to icon/subtitle heuristics.
         """
+        event_type = txn.get("eventType") or ""
         icon = txn.get("icon") or ""
         subtitle = (txn.get("subtitle") or "").strip().lower()
         cash_account = txn.get("cashAccountNumber")
         amount_val = (txn.get("amount") or {}).get("value", 0)
 
-        # Card: merchant icon is the strongest signal
+        # 1. Strong signal: eventType
+        if event_type == "card_successful_transaction":
+            return "card"
+        
+        if event_type in (
+            "ORDER_EXECUTED", 
+            "SAVINGS_PLAN_EXECUTED", 
+            "SAVINGS_PLAN_INVOICE_CREATED", 
+            "INTEREST_PAYOUT", 
+            "INTEREST_PAYOUT_CREATED", 
+            "DIVIDEND_PAYOUT",
+            "trading_savingsplan_executed",
+            "ssp_corporate_action_invoice_cash",
+            "TRADE_INVOICE"
+        ):
+            return "investment"
+
+        # 2. Strong signal: merchant icon
         if "merchant-" in icon:
             return "card"
+
+        # 3. Heuristics for older/incomplete data
 
         # Investment: known subtitles
         if subtitle and any(s in subtitle for s in INVESTMENT_SUBTITLES):
             return "investment"
 
-        # Investment: has cashAccountNumber (brokerage account)
+        # Investment: has cashAccountNumber (brokerage account reference usually)
         if cash_account:
             return "investment"
 
@@ -88,6 +103,8 @@ class TimelineManager:
         t["currency"] = currency
         t["category"] = category
         t["subtitle_raw"] = t.get("subtitle") or ""
+        t["event_type"] = t.get("eventType") or ""
+        
         # Add spending category for card transactions
         if category == "card":
             t["spending_category"] = categorize_merchant(t["merchant"])
@@ -115,7 +132,7 @@ class TimelineManager:
         fieldnames = [
             "id", "timestamp", "category", "spending_category", "merchant",
             "normalized_amount", "currency", "status",
-            "subtitle_raw", "title",
+            "subtitle_raw", "title", "event_type"
         ]
 
         rows = [{k: t.get(k) for k in fieldnames} for t in all_txns]

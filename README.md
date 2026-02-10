@@ -6,12 +6,16 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
 
 - **Iteration 1 & 2 (Auth & WebSocket):** Implemented in `src/tracker/client.py`. Uses `httpx` for REST Auth and `websockets` for real-time data.
 - **Iteration 3 (Transaction History):** Implemented in `src/tracker/timeline.py`. Fetches full history via WebSocket pagination.
-- **Iteration 4 (Data Parsing):** **Refined (2026-02-10).**
+- **Iteration 4 (Data Parsing):** **Completed (2026-02-10).**
+  - Robust classification using `eventType` (e.g. `card_successful_transaction` vs `ORDER_EXECUTED`).
+  - Fallback heuristics for older data.
+  - CSV export now includes `event_type` for debugging.
   - Validated field mapping against Reference Go implementation.
-  - Confirmed mappings: `title` -> Merchant, `eventType` -> Transaction Type.
-  - Fixed timestamp parsing for ISO formats (e.g., `2024-05-27T13:51:55.167+0000`).
-  - Improved CSV export columns (`merchant`, `type`, `status`).
-- **Iteration 5 (Analysis):** Implemented in `src/tracker/analysis.py`. Provides spending summary, monthly breakdown, and top merchants.
+- **Iteration 5 (Analysis):** **Completed (2026-02-10).**
+  - Implemented `PortfolioAnalyzer` in `src/tracker/analysis.py`.
+  - Provides Card Spending summary (Net Spent, Refunds, Top Merchants, Category breakdown).
+  - Provides Investment summary (Net Invested, Top Assets).
+  - Monthly breakdown of In/Out for both Cards and Investments.
 
 ## Usage
 
