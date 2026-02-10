@@ -6,23 +6,36 @@ Add merchants here as you discover them. Case-insensitive matching.
 
 import logging
 import unicodedata
+import re
 
 logger = logging.getLogger(__name__)
 
 def normalize_text(text: str) -> str:
     """
-    Normalizes text: lowercase, strip, remove accents.
-    e.g. "Caffè Nero" -> "caffe nero"
+    Normalizes text: lowercase, strip, remove accents,
+    replace special chars with spaces.
+    e.g. "Caffè @ Nero!" -> "caffe nero"
     """
     if not text:
         return ""
     
-    # Unicode normalization (NFD splits char + combining accent)
+    # 1. Unicode normalization (NFD splits char + combining accent)
     text = unicodedata.normalize('NFD', text)
-    # Filter out non-spacing mark characters (accents)
+    
+    # 2. Filter out non-spacing mark characters (accents)
     text = "".join(c for c in text if unicodedata.category(c) != 'Mn')
     
-    return text.lower().strip()
+    # 3. Lowercase
+    text = text.lower()
+    
+    # 4. Replace non-alphanumeric characters with spaces
+    # Keep only a-z, 0-9 and spaces
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    
+    # 5. Collapse multiple spaces and strip
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
 
 
 # Default built-in rules
