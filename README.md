@@ -36,6 +36,11 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
 - **Iteration 10 (Budget & Weekly Subs):** **Completed (2026-02-11).**
   - **Weekly Subscription Detection:** Extended subscription heuristics to detect weekly recurring payments (5-9 day intervals).
   - **Budget Tracking:** New `--budget` CLI flag to set monthly spending limit with visual pace indicators (🟢🟡🔴).
+- **Iteration 11 (Category Auto-Learning):** **Completed (2026-02-11).**
+  - **Uncategorized Detection:** Identifies merchants tagged as "Other" with 2+ transactions.
+  - **AI Category Suggestions:** Heuristic pattern matching suggests categories based on common keywords.
+  - **Export Workflow:** New `--export-suggestions PATH` flag exports uncategorized merchants to CSV for review.
+  - **Report Section:** "Uncategorized Merchants" section shows top 15 merchants needing categorization with suggested categories.
 
 ## Usage
 
@@ -50,6 +55,10 @@ python3 -m src.tracker.cli --output my_transactions.csv
 
 # With budget tracking (EUR)
 python3 -m src.tracker.cli --budget 2000 --output my_transactions.csv
+
+# Export uncategorized merchants for review
+python3 -m src.tracker.cli --input my_transactions.csv --export-suggestions uncategorized.csv
+# Then: Edit uncategorized.csv, fill 'Category' column, append to data/categories.csv
 ```
 
 ## Structure

@@ -1,30 +1,33 @@
 [TRADE REPUBLIC RESEARCH]
 
 **Summary:**
-Iteration 10 (Budget & Weekly Subs) Complete. Extended subscription detection to catch weekly recurring payments, and added budget tracking with visual pace indicators.
+Iteration 11 (Category Auto-Learning) Complete. Added automatic detection of uncategorized merchants and AI-suggested categories based on keyword patterns.
 
 **Status Update:**
-1.  **Weekly Subscription Detection (Iteration 10):**
-    -   Extended `_subscription_section()` to detect 5-9 day intervals (weekly patterns).
-    -   Weekly costs are converted to monthly equivalent (×4.33) for total subscription cost.
-    -   Useful for detecting weekly gym classes, meal deliveries, etc.
+1.  **Uncategorized Merchant Detection (Iteration 11):**
+    -   New `_uncategorized_section()` in report identifies merchants with "Other" category.
+    -   Only shows merchants with 2+ transactions (recurring/significant).
+    -   Sorted by total spending to prioritize high-value categorizations.
 
-2.  **Budget Tracking (Iteration 10):**
-    -   New `--budget` CLI flag to set monthly spending limit.
-    -   Budget Tracker section in report shows:
-        -   Budget vs MTD spending
-        -   Remaining amount and percentage
-        -   Pace indicators (🟢🟡🔴) comparing actual vs expected usage
-        -   Warning if projected to exceed budget
+2.  **AI Category Suggestions (Iteration 11):**
+    -   `_suggest_category()` method uses keyword pattern matching.
+    -   Recognizes patterns for: Restaurant, Grocery, Shopping, Health, Transport, Entertainment, Travel, Services, Subscription, Utilities.
+    -   Multi-language support (English, French, Italian, German, Slovak keywords).
 
-3.  **Prior Work (Iteration 9):**
-    -   MTD Projection, YoY comparison, Savings Rate, Pace Indicators.
+3.  **Export Workflow (Iteration 11):**
+    -   New `--export-suggestions PATH` CLI flag.
+    -   Exports CSV with columns: Merchant, Category (blank), Transactions, TotalSpent, Suggested.
+    -   User reviews, fills in Category column, appends to `data/categories.csv`.
+
+4.  **Prior Work:**
+    -   Iteration 10: Budget tracking, weekly subscription detection.
+    -   Iteration 9: MTD Projection, YoY comparison, Savings Rate.
 
 **Next Steps:**
--   **Category Auto-Learning:** Detect uncategorized merchants with high frequency and suggest categories.
 -   **Export Formats:** Add JSON export option for programmatic use.
 -   **Historical Budgets:** Track budget adherence over multiple months.
+-   **Category Confidence Scores:** Show confidence level for AI suggestions.
 
 **Links:**
 -   Code: `projects/trade-republic-tracker/src/tracker/analysis.py`
--   Tests: `projects/trade-republic-tracker/tests/test_logic.py`
+-   CLI: `projects/trade-republic-tracker/src/tracker/cli.py`

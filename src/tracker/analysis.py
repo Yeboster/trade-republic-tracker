@@ -1,7 +1,9 @@
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import logging
+import os
+import csv
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ class PortfolioAnalyzer:
         sections.append(self._spending_insights_section(card_txns, transfer_in))
         sections.append(self._card_section(card_txns))
         sections.append(self._subscription_section(card_txns))
+        sections.append(self._uncategorized_section(card_txns))
         sections.append(self._investment_section(invest_txns))
         sections.append(self._transfer_section(transfer_in, transfer_out))
         sections.append(self._monthly_section())
@@ -373,6 +376,168 @@ class PortfolioAnalyzer:
         lines.append("")
         lines.append(f"  Est. Monthly Cost: {total_monthly:>.2f}")
         return "\n".join(lines)
+
+    # ── Uncategorized (Auto-Learn) ──────────────────────────────────
+
+    def _uncategorized_section(self, card_txns) -> str:
+        """
+        Identify frequently uncategorized merchants and suggest categories.
+        Shows merchants tagged as "Other" that appear multiple times.
+        """
+        if not card_txns:
+            return ""
+
+        # Find uncategorized merchants with multiple transactions
+        uncategorized = defaultdict(lambda: {"count": 0, "total": 0.0, "last_seen": ""})
+        for t in card_txns:
+            if t.get("spending_category", "Other") == "Other":
+                merchant = t["merchant"]
+                uncategorized[merchant]["count"] += 1
+                uncategorized[merchant]["total"] += abs(t.get("normalized_amount", 0))
+                month = _parse_month(t)
+                if month > uncategorized[merchant]["last_seen"]:
+                    uncategorized[merchant]["last_seen"] = month
+
+        # Filter to merchants with 2+ transactions (recurring/important)
+        frequent_uncategorized = [
+            (m, d) for m, d in uncategorized.items() 
+            if d["count"] >= 2
+        ]
+        
+        if not frequent_uncategorized:
+            return ""
+
+        # Sort by total spending (highest first)
+        frequent_uncategorized.sort(key=lambda x: x[1]["total"], reverse=True)
+        
+        # Limit to top 15
+        top_uncategorized = frequent_uncategorized[:15]
+        
+        # Try to suggest categories based on common keywords
+        suggestions = []
+        for merchant, data in top_uncategorized:
+            suggested = self._suggest_category(merchant)
+            suggestions.append({
+                "merchant": merchant,
+                "count": data["count"],
+                "total": data["total"],
+                "last_seen": data["last_seen"],
+                "suggested": suggested
+            })
+
+        lines = [
+            "── UNCATEGORIZED MERCHANTS ──────────────",
+            "  (Merchants with 2+ transactions in 'Other' category)",
+            "",
+            f"  {'Merchant':<30s}  {'Total':>10s}  {'#':>4s}  {'Suggested'}",
+            "  " + "─" * 70,
+        ]
+        
+        for s in suggestions:
+            sugg_text = s["suggested"] or "?"
+            lines.append(
+                f"  {s['merchant'][:30]:<30s}  {s['total']:>10.2f}  {s['count']:>4d}  {sugg_text}"
+            )
+        
+        lines.append("")
+        lines.append(f"  💡 {len(suggestions)} merchants need categorization")
+        lines.append("     Run with --export-suggestions to generate CSV")
+        
+        return "\n".join(lines)
+
+    def _suggest_category(self, merchant: str) -> str:
+        """
+        Heuristic category suggestion based on common keywords.
+        Returns suggested category or None.
+        """
+        name = merchant.lower()
+        
+        # Common patterns that indicate category
+        patterns = [
+            # Food/Dining
+            (["restaurant", "ristorante", "bistro", "brasserie", "cafe", "caffè", "coffee", 
+              "pizza", "sushi", "kebab", "burger", "ramen", "trattoria", "osteria"], "Restaurant"),
+            (["bakery", "boulangerie", "patisserie", "pain"], "Grocery"),
+            (["bar ", " bar", "pub ", " pub"], "Restaurant"),
+            
+            # Shopping
+            (["market", "marche", "supermarket", "supermercato", "grocery", "epicerie", 
+              "alimentari", "potraviny"], "Grocery"),
+            (["shop", "store", "boutique", "magasin"], "Shopping"),
+            (["pharmacy", "pharmacie", "farmacia", "apotheke", "lekaren", "drogerie"], "Health"),
+            
+            # Transport
+            (["parking", "aparcament", "parcheggio", "park ", "garage"], "Transport"),
+            (["taxi", "cab ", "uber", "bolt", "lyft"], "Transport"),
+            (["gas", "fuel", "petrol", "essence", "station", "shell", "bp ", "esso", "total"], "Transport"),
+            (["train", "bus", "metro", "tram", "transit", "transport"], "Transport"),
+            (["rent a car", "car rental", "autonoleggio"], "Transport"),
+            
+            # Entertainment
+            (["cinema", "movie", "film", "theatre", "theater", "teatro"], "Entertainment"),
+            (["museum", "musee", "museo", "gallery", "galerie"], "Entertainment"),
+            (["ticket", "billet", "biglietto", "entrada"], "Entertainment"),
+            (["sport", "gym", "fitness", "climbing", "padel", "tennis", "ski"], "Entertainment"),
+            (["zoo", "aquarium", "park", "parque"], "Entertainment"),
+            
+            # Travel
+            (["hotel", "hostel", "motel", "airbnb", "booking"], "Travel"),
+            (["airline", "flight", "aero", "airport"], "Travel"),
+            
+            # Services
+            (["doctor", "dentist", "medecin", "dentaire", "clinic", "clinique"], "Health"),
+            (["laundry", "laverie", "pressing"], "Services"),
+            (["post", "poste", "fedex", "ups", "dhl"], "Services"),
+            
+            # Utilities/Subscription
+            (["mobile", "telecom", "telefon"], "Utilities"),
+            (["subscription", "premium", "membership"], "Subscription"),
+        ]
+        
+        for keywords, category in patterns:
+            for keyword in keywords:
+                if keyword in name:
+                    return category
+        
+        return None
+
+    def export_category_suggestions(self, output_path: str) -> int:
+        """
+        Export uncategorized merchants to CSV for user review.
+        Returns number of suggestions exported.
+        """
+        card_txns = [t for t in self.transactions if t.get("category") == "card"]
+        
+        # Collect uncategorized
+        uncategorized = defaultdict(lambda: {"count": 0, "total": 0.0})
+        for t in card_txns:
+            if t.get("spending_category", "Other") == "Other":
+                merchant = t["merchant"]
+                uncategorized[merchant]["count"] += 1
+                uncategorized[merchant]["total"] += abs(t.get("normalized_amount", 0))
+        
+        # Filter to 2+ transactions
+        to_export = [
+            (m, d["count"], d["total"], self._suggest_category(m) or "")
+            for m, d in uncategorized.items()
+            if d["count"] >= 2
+        ]
+        
+        if not to_export:
+            return 0
+        
+        # Sort by total spent
+        to_export.sort(key=lambda x: x[2], reverse=True)
+        
+        with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Merchant", "Category", "Transactions", "TotalSpent", "Suggested"])
+            for merchant, count, total, suggested in to_export:
+                # Category column left blank for user to fill
+                writer.writerow([merchant, "", count, f"{total:.2f}", suggested])
+        
+        logger.info(f"Exported {len(to_export)} category suggestions to {output_path}")
+        return len(to_export)
 
     # ── Investments ─────────────────────────────────────────────────
 

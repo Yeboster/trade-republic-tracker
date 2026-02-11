@@ -30,6 +30,8 @@ async def main():
     parser.add_argument("--map", action="append", help="Map merchant to category (format: 'Merchant Name=Category')")
     parser.add_argument("--list-merchants", action="store_true", help="List all unique merchants and exit (useful for LLM categorization)")
     parser.add_argument("--budget", type=float, help="Monthly spending budget (EUR). Shows alerts if exceeded.")
+    parser.add_argument("--export-suggestions", type=str, metavar="PATH",
+                        help="Export uncategorized merchants to CSV for review (with AI-suggested categories)")
     
     args = parser.parse_args()
 
@@ -183,7 +185,17 @@ async def main():
                 print(f"{m},ERROR")
         return
 
-    # 2. Analyze
+    # 2. Export Category Suggestions
+    if args.export_suggestions and transactions:
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
+        count = analyzer.export_category_suggestions(args.export_suggestions)
+        if count > 0:
+            print(f"\n✅ Exported {count} category suggestions to: {args.export_suggestions}")
+            print("   Edit the 'Category' column and add to data/categories.csv")
+        else:
+            print("\n✓ No uncategorized merchants with 2+ transactions found.")
+
+    # 3. Analyze
     if transactions:
         analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
         report = analyzer.generate_report()
