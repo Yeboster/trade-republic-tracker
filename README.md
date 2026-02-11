@@ -50,6 +50,11 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **Visual Indicators:** Report displays confidence as ●●● (high ≥85%), ●●○ (medium ≥70%), ●○○ (low), ○○○ (none).
   - **Enhanced CSV Export:** Category suggestions CSV now includes Confidence and Reason columns for better review workflow.
   - **JSON Uncategorized:** JSON output now includes `uncategorized` array with full confidence metadata (`confidence`, `confidence_level`, `reason`).
+- **Iteration 14 (Auto-Apply High Confidence):** **Completed (2026-02-11).**
+  - **Auto-Categorize:** New `--auto-apply` flag automatically adds high-confidence suggestions to `data/categories.csv`.
+  - **Configurable Threshold:** `--auto-apply-threshold` sets minimum confidence (default: 0.90 / 90%).
+  - **Dry-Run Mode:** `--dry-run` previews changes without writing to CSV.
+  - **Duplicate Detection:** Skips merchants already present in categories.csv.
 
 ## Usage
 
@@ -72,6 +77,15 @@ python3 -m src.tracker.cli --input my_transactions.csv --export-suggestions unca
 # JSON output (for scripts/integrations)
 python3 -m src.tracker.cli --input my_transactions.csv --format json
 python3 -m src.tracker.cli --input my_transactions.csv --json-output report.json --budget 2000
+
+# Auto-apply high-confidence category suggestions (≥90%)
+python3 -m src.tracker.cli --input my_transactions.csv --auto-apply
+
+# Preview what would be auto-applied (dry-run)
+python3 -m src.tracker.cli --input my_transactions.csv --auto-apply --dry-run
+
+# Custom threshold (e.g., 85%)
+python3 -m src.tracker.cli --input my_transactions.csv --auto-apply --auto-apply-threshold 0.85
 ```
 
 ## Structure

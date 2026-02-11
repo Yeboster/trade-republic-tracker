@@ -494,3 +494,66 @@ def categorize_merchant(merchant_name: str) -> str:
             return category
     
     return "Other"
+
+
+def append_rules_to_csv(rules: list) -> int:
+    """
+    Appends new merchant → category rules to data/categories.csv.
+    
+    Args:
+        rules: List of dicts with 'merchant' and 'category' keys
+    
+    Returns:
+        Number of rules added
+    """
+    global _csv_rules
+    
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    csv_path = base_dir / "data" / "categories.csv"
+    
+    # Create data directory if needed
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if file exists (need header)
+    file_exists = csv_path.exists()
+    
+    # Load existing rules to avoid duplicates
+    load_csv_rules()
+    existing_merchants = {normalize_text(r[0]) for r in _csv_rules}
+    
+    # Filter out duplicates
+    new_rules = []
+    for rule in rules:
+        merchant = rule.get('merchant', '')
+        category = rule.get('category', '')
+        if not merchant or not category:
+            continue
+        norm_merchant = normalize_text(merchant)
+        if norm_merchant not in existing_merchants:
+            new_rules.append((merchant, category))
+            existing_merchants.add(norm_merchant)
+    
+    if not new_rules:
+        return 0
+    
+    try:
+        with open(csv_path, 'a', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            
+            # Write header if new file
+            if not file_exists:
+                writer.writerow(["Merchant", "Category"])
+            
+            for merchant, category in new_rules:
+                writer.writerow([merchant, category])
+        
+        # Reload rules to include newly added ones
+        _csv_rules.clear()
+        load_csv_rules()
+        
+        logger.info(f"Added {len(new_rules)} rules to categories.csv")
+        return len(new_rules)
+        
+    except Exception as e:
+        logger.error(f"Failed to append rules to CSV: {e}")
+        return 0

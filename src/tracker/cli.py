@@ -7,7 +7,7 @@ import json
 from .client import TradeRepublicClient
 from .timeline import TimelineManager
 from .analysis import PortfolioAnalyzer
-from .categories import add_rule
+from .categories import add_rule, append_rules_to_csv
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Main")
@@ -37,6 +37,13 @@ async def main():
                         help="Output format for the report (default: text)")
     parser.add_argument("--json-output", type=str, metavar="PATH",
                         help="Write JSON report to file (implies --format json)")
+    parser.add_argument("--auto-apply", action="store_true",
+                        help="Automatically add high-confidence category suggestions to categories.csv")
+    parser.add_argument("--auto-apply-threshold", type=float, default=0.90,
+                        metavar="THRESHOLD",
+                        help="Minimum confidence score for auto-apply (default: 0.90)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview auto-apply changes without writing to CSV")
     
     args = parser.parse_args()
 
@@ -190,7 +197,32 @@ async def main():
                 print(f"{m},ERROR")
         return
 
-    # 2. Export Category Suggestions
+    # 2. Auto-Apply High Confidence Categories
+    if args.auto_apply and transactions:
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
+        suggestions = analyzer.get_high_confidence_suggestions(threshold=args.auto_apply_threshold)
+        
+        if suggestions:
+            print(f"\n🤖 AUTO-APPLY: Found {len(suggestions)} high-confidence suggestions (≥{args.auto_apply_threshold:.0%})")
+            print(f"   {'Merchant':<35s}  {'Category':<15s}  {'Conf':>5s}  {'Reason'}")
+            print("   " + "─" * 75)
+            for s in suggestions:
+                conf_pct = f"{s['confidence']:.0%}"
+                print(f"   {s['merchant'][:35]:<35s}  {s['category']:<15s}  {conf_pct:>5s}  {s['reason'] or ''}")
+            
+            if args.dry_run:
+                print(f"\n   ℹ️  DRY-RUN: Would add {len(suggestions)} rules to data/categories.csv")
+            else:
+                added = append_rules_to_csv(suggestions)
+                if added > 0:
+                    print(f"\n   ✅ Added {added} new rules to data/categories.csv")
+                    print("      Re-run with --input to re-categorize transactions.")
+                else:
+                    print(f"\n   ℹ️  No new rules added (all already exist in CSV)")
+        else:
+            print(f"\n✓ No high-confidence suggestions (≥{args.auto_apply_threshold:.0%}) to auto-apply.")
+
+    # 3. Export Category Suggestions
     if args.export_suggestions and transactions:
         analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
         count = analyzer.export_category_suggestions(args.export_suggestions)
@@ -200,7 +232,7 @@ async def main():
         else:
             print("\n✓ No uncategorized merchants with 2+ transactions found.")
 
-    # 3. Analyze
+    # 4. Analyze
     if transactions:
         analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
         

@@ -1060,3 +1060,33 @@ class PortfolioAnalyzer:
         # Sort by confidence (highest first), then by total spent
         results.sort(key=lambda x: (-x["confidence"], -x["total_spent"]))
         return results
+
+    def get_high_confidence_suggestions(self, threshold: float = 0.90) -> List[Dict]:
+        """
+        Get merchants that have high-confidence category suggestions.
+        
+        Args:
+            threshold: Minimum confidence score (default 0.90)
+        
+        Returns:
+            List of dicts with 'merchant', 'category', 'confidence', 'reason'
+            ready to be auto-applied.
+        """
+        card_txns = [t for t in self.transactions if t.get("category") == "card"]
+        all_suggestions = self._get_uncategorized_with_confidence(card_txns)
+        
+        # Filter by threshold and ensure we have a suggested category
+        high_conf = [
+            {
+                "merchant": s["merchant"],
+                "category": s["suggested_category"],
+                "confidence": s["confidence"],
+                "reason": s["reason"],
+                "transaction_count": s["transaction_count"],
+                "total_spent": s["total_spent"],
+            }
+            for s in all_suggestions
+            if s["suggested_category"] and s["confidence"] >= threshold
+        ]
+        
+        return high_conf
