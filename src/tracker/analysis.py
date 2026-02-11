@@ -23,15 +23,39 @@ def _parse_month(txn: Dict) -> str:
         return "Unknown"
 
 
+class AlertThresholds:
+    """Configurable thresholds for spending alerts."""
+    def __init__(
+        self,
+        large_txn_first_time: float = 150.0,      # Min € for first-time large purchase
+        large_txn_multiplier: float = 2.0,         # Multiplier of merchant avg
+        large_txn_min: float = 50.0,               # Min € for outlier detection
+        daily_spike_multiplier: float = 2.5,       # Multiplier of daily avg
+        daily_spike_min: float = 200.0,            # Min € for daily spike
+        category_spike_multiplier: float = 1.8,    # Multiplier of category avg
+        category_spike_min_delta: float = 50.0,    # Min € over avg
+        new_merchant_days: int = 7,                # Days to consider "new"
+    ):
+        self.large_txn_first_time = large_txn_first_time
+        self.large_txn_multiplier = large_txn_multiplier
+        self.large_txn_min = large_txn_min
+        self.daily_spike_multiplier = daily_spike_multiplier
+        self.daily_spike_min = daily_spike_min
+        self.category_spike_multiplier = category_spike_multiplier
+        self.category_spike_min_delta = category_spike_min_delta
+        self.new_merchant_days = new_merchant_days
+
+
 class PortfolioAnalyzer:
     """
     Full portfolio analysis: card spending, investments, and combined overview.
     """
 
-    def __init__(self, transactions: List[Dict], budget: float = None, category_goals_path: str = None):
+    def __init__(self, transactions: List[Dict], budget: float = None, category_goals_path: str = None, thresholds: AlertThresholds = None):
         self.transactions = [t for t in transactions if self._is_executed(t)]
         self.budget = budget  # Optional monthly spending budget
         self.category_goals = self._load_category_goals(category_goals_path)
+        self.thresholds = thresholds or AlertThresholds()
         self._category_goals_data = []  # For JSON export
 
     def _load_category_goals(self, path: str) -> Dict[str, float]:
@@ -74,6 +98,7 @@ class PortfolioAnalyzer:
         sections = []
         sections.append(self._overview_section(card_txns, invest_txns, transfer_in, transfer_out))
         sections.append(self._spending_insights_section(card_txns, transfer_in))
+        sections.append(self._weekly_trends_section(card_txns))  # Week-over-Week trends
         sections.append(self._category_goals_section(card_txns))  # Category budget goals
         sections.append(self._alerts_section(card_txns))  # Spending Alerts
         sections.append(self._card_section(card_txns))
@@ -248,6 +273,127 @@ class PortfolioAnalyzer:
 
         return "\n".join(lines)
 
+    # ── Week-over-Week Trends ───────────────────────────────────────
+
+    def _weekly_trends_section(self, card_txns) -> str:
+        """
+        Show week-over-week spending trends with velocity indicators.
+        """
+        if not card_txns:
+            return ""
+
+        now = datetime.now()
+        
+        # Group transactions by ISO week
+        def get_week_key(txn):
+            ts = txn.get("timestamp")
+            try:
+                if isinstance(ts, (int, float)):
+                    dt = datetime.fromtimestamp(ts / 1000 if ts > 10**11 else ts)
+                elif isinstance(ts, str):
+                    ts = ts.replace("+0000", "+00:00").replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(ts)
+                else:
+                    return None
+                return dt.isocalendar()[:2]  # (year, week)
+            except:
+                return None
+
+        weekly_spending = defaultdict(float)
+        weekly_txn_count = defaultdict(int)
+        
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                week_key = get_week_key(t)
+                if week_key:
+                    weekly_spending[week_key] += abs(t["normalized_amount"])
+                    weekly_txn_count[week_key] += 1
+
+        if len(weekly_spending) < 2:
+            return ""
+
+        # Get last 8 weeks for trend analysis
+        sorted_weeks = sorted(weekly_spending.keys(), reverse=True)[:8]
+        sorted_weeks.reverse()  # Oldest to newest
+        
+        current_week = now.isocalendar()[:2]
+        
+        lines = [
+            "── 📈 WEEKLY TRENDS ─────────────────────",
+            ""
+        ]
+
+        # Calculate week-over-week changes
+        weekly_data = []
+        for i, week_key in enumerate(sorted_weeks):
+            spend = weekly_spending[week_key]
+            count = weekly_txn_count[week_key]
+            prev_spend = weekly_spending.get(sorted_weeks[i-1]) if i > 0 else None
+            
+            wow_change = None
+            if prev_spend and prev_spend > 0:
+                wow_change = ((spend - prev_spend) / prev_spend) * 100
+            
+            weekly_data.append({
+                "week": week_key,
+                "spend": spend,
+                "count": count,
+                "wow_change": wow_change
+            })
+
+        # Display last 4 weeks with trends
+        lines.append("  Week-over-Week:")
+        recent_weeks = weekly_data[-4:] if len(weekly_data) >= 4 else weekly_data
+        
+        for wd in recent_weeks:
+            year, week = wd["week"]
+            is_current = wd["week"] == current_week
+            label = f"W{week:02d}" + (" (now)" if is_current else "     ")
+            
+            wow = wd["wow_change"]
+            if wow is not None:
+                if wow > 20:
+                    indicator = f"🔴 +{wow:.0f}%"
+                elif wow > 0:
+                    indicator = f"🟡 +{wow:.0f}%"
+                elif wow < -20:
+                    indicator = f"🟢 {wow:.0f}%"
+                else:
+                    indicator = f"    {wow:.0f}%"
+            else:
+                indicator = "    —"
+            
+            lines.append(f"    {label}  €{wd['spend']:>8,.0f}  ({wd['count']:>3d} txns)  {indicator}")
+
+        # Calculate trend (velocity)
+        if len(weekly_data) >= 4:
+            recent_avg = sum(w["spend"] for w in weekly_data[-2:]) / 2
+            older_avg = sum(w["spend"] for w in weekly_data[-4:-2]) / 2
+            
+            if older_avg > 0:
+                velocity = ((recent_avg - older_avg) / older_avg) * 100
+                lines.append("")
+                if velocity > 15:
+                    lines.append(f"  📈 Spending velocity: +{velocity:.0f}% (accelerating)")
+                elif velocity < -15:
+                    lines.append(f"  📉 Spending velocity: {velocity:.0f}% (decelerating)")
+                else:
+                    lines.append(f"  ➡️  Spending velocity: {velocity:+.0f}% (stable)")
+
+        # 4-week rolling average
+        if len(weekly_data) >= 4:
+            rolling_avg = sum(w["spend"] for w in weekly_data[-4:]) / 4
+            lines.append(f"  4-Week Average:       €{rolling_avg:>8,.0f}/week")
+
+        # Store for JSON
+        self._weekly_trends_data = weekly_data
+
+        return "\n".join(lines)
+
+    def get_weekly_trends_data(self) -> list:
+        """Return weekly trends data (call after generate_report)."""
+        return getattr(self, '_weekly_trends_data', [])
+
     # ── Category Goals (Per-Category Budgets) ───────────────────────
 
     def _category_goals_section(self, card_txns) -> str:
@@ -363,6 +509,7 @@ class PortfolioAnalyzer:
                 merchant_amounts[t["merchant"]].append(abs(t["normalized_amount"]))
 
         large_txn_alerts = []
+        th = self.thresholds  # Shorthand
         for t in card_txns:
             if t["normalized_amount"] >= 0:
                 continue
@@ -372,8 +519,8 @@ class PortfolioAnalyzer:
             
             # Skip if only 1 transaction (can't detect anomaly)
             if len(amounts) < 2:
-                # But flag if it's a big first-time transaction (>150€)
-                if amount > 150:
+                # But flag if it's a big first-time transaction
+                if amount > th.large_txn_first_time:
                     ts = t.get("timestamp")
                     date_str = self._format_date(ts)
                     large_txn_alerts.append({
@@ -386,8 +533,8 @@ class PortfolioAnalyzer:
                 continue
 
             avg = sum(amounts) / len(amounts)
-            # Flag if >2x average for this merchant
-            if amount > avg * 2 and amount > 50:
+            # Flag if above threshold multiplier of average for this merchant
+            if amount > avg * th.large_txn_multiplier and amount > th.large_txn_min:
                 ts = t.get("timestamp")
                 date_str = self._format_date(ts)
                 large_txn_alerts.append({
@@ -419,8 +566,8 @@ class PortfolioAnalyzer:
             baseline_values = values[:cutoff] if cutoff > 0 else values
             avg_daily = sum(baseline_values) / len(baseline_values) if baseline_values else 0
 
-            # Flag days with >2.5x average spending
-            spike_threshold = max(avg_daily * 2.5, 200)  # At least 200€ to flag
+            # Flag days with spending above threshold
+            spike_threshold = max(avg_daily * th.daily_spike_multiplier, th.daily_spike_min)
             for day in sorted_days[-30:]:  # Check last 30 days
                 if daily_spending[day] > spike_threshold:
                     alerts.append({
@@ -454,10 +601,10 @@ class PortfolioAnalyzer:
                 except:
                     continue
 
-        week_ago = now - timedelta(days=7)
+        lookback = now - timedelta(days=th.new_merchant_days)
         new_merchants = []
         for merchant, first_dt in merchant_first_seen.items():
-            if first_dt > week_ago:
+            if first_dt > lookback:
                 total = sum(abs(t["normalized_amount"]) for t in card_txns 
                            if t["merchant"] == merchant and t["normalized_amount"] < 0)
                 new_merchants.append({
@@ -491,8 +638,8 @@ class PortfolioAnalyzer:
                     current_spend = cat_by_month[current_month][cat]
                     historical_avg = sum(cat_by_month[m].get(cat, 0) for m in historical_months) / len(historical_months)
                     
-                    # Flag if >80% over average and at least 50€ over
-                    if historical_avg > 0 and current_spend > historical_avg * 1.8 and current_spend - historical_avg > 50:
+                    # Flag if above threshold multiplier and minimum delta
+                    if historical_avg > 0 and current_spend > historical_avg * th.category_spike_multiplier and current_spend - historical_avg > th.category_spike_min_delta:
                         alerts.append({
                             "type": "category_spike",
                             "category": cat,
@@ -1229,6 +1376,10 @@ class PortfolioAnalyzer:
         self._alerts_section(card_txns)
         alerts = getattr(self, '_alerts', [])
 
+        # Generate weekly trends
+        self._weekly_trends_section(card_txns)
+        weekly_trends = getattr(self, '_weekly_trends_data', [])
+
         return {
             "generated_at": datetime.now().isoformat(),
             "summary": {
@@ -1262,6 +1413,16 @@ class PortfolioAnalyzer:
             } if self.budget else None,
             "uncategorized": uncategorized_merchants,
             "category_goals": category_goals if category_goals else None,
+            "weekly_trends": [
+                {
+                    "year": w["week"][0],
+                    "week": w["week"][1],
+                    "spend": round(w["spend"], 2),
+                    "count": w["count"],
+                    "wow_change": round(w["wow_change"], 1) if w["wow_change"] is not None else None
+                }
+                for w in weekly_trends
+            ] if weekly_trends else None,
         }
 
     def _detect_subscriptions(self, card_txns: List[Dict]) -> List[Dict]:

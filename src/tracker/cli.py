@@ -6,7 +6,7 @@ import sys
 import json
 from .client import TradeRepublicClient
 from .timeline import TimelineManager
-from .analysis import PortfolioAnalyzer
+from .analysis import PortfolioAnalyzer, AlertThresholds
 from .categories import add_rule, append_rules_to_csv
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -48,6 +48,20 @@ async def main():
                         help="Show only spending alerts (skip full report)")
     parser.add_argument("--category-goals", type=str, metavar="PATH",
                         help="Path to category goals CSV (default: data/category_goals.csv)")
+    
+    # Threshold configuration
+    parser.add_argument("--threshold-large-first", type=float, default=150.0,
+                        metavar="EUR", help="Min € for first-time large purchase alert (default: 150)")
+    parser.add_argument("--threshold-large-mult", type=float, default=2.0,
+                        metavar="X", help="Multiplier of merchant avg for outlier detection (default: 2.0)")
+    parser.add_argument("--threshold-daily-mult", type=float, default=2.5,
+                        metavar="X", help="Multiplier of daily avg for spike detection (default: 2.5)")
+    parser.add_argument("--threshold-daily-min", type=float, default=200.0,
+                        metavar="EUR", help="Min € for daily spike alert (default: 200)")
+    parser.add_argument("--threshold-cat-mult", type=float, default=1.8,
+                        metavar="X", help="Multiplier of category avg for overspending (default: 1.8)")
+    parser.add_argument("--threshold-new-days", type=int, default=7,
+                        metavar="DAYS", help="Days to consider a merchant 'new' (default: 7)")
     
     args = parser.parse_args()
 
@@ -174,6 +188,16 @@ async def main():
 
     # ── Post-Processing & Output ────────────────────────────
     
+    # Build alert thresholds from CLI args
+    thresholds = AlertThresholds(
+        large_txn_first_time=args.threshold_large_first,
+        large_txn_multiplier=args.threshold_large_mult,
+        daily_spike_multiplier=args.threshold_daily_mult,
+        daily_spike_min=args.threshold_daily_min,
+        category_spike_multiplier=args.threshold_cat_mult,
+        new_merchant_days=args.threshold_new_days,
+    )
+    
     # 1. Feature: List Merchants (for LLM extraction)
     if args.list_merchants:
         from .categories import categorize_merchant, normalize_text
@@ -203,7 +227,7 @@ async def main():
 
     # 2. Auto-Apply High Confidence Categories
     if args.auto_apply and transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals, thresholds=thresholds)
         suggestions = analyzer.get_high_confidence_suggestions(threshold=args.auto_apply_threshold)
         
         if suggestions:
@@ -228,7 +252,7 @@ async def main():
 
     # 3. Export Category Suggestions
     if args.export_suggestions and transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals, thresholds=thresholds)
         count = analyzer.export_category_suggestions(args.export_suggestions)
         if count > 0:
             print(f"\n✅ Exported {count} category suggestions to: {args.export_suggestions}")
@@ -238,7 +262,7 @@ async def main():
 
     # 4. Analyze
     if transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals, thresholds=thresholds)
         
         # Determine format
         output_format = args.format

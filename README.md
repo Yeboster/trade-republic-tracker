@@ -71,6 +71,19 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **Goals CSV:** Configurable via `data/category_goals.csv`.
   - **CLI Integration:** New `--category-goals PATH` flag for custom goals file.
   - **JSON Support:** Category goals progress included in JSON output.
+- **Iteration 17 (Configurable Thresholds & Weekly Trends):** **Completed (2026-02-11).**
+  - **Configurable Alert Thresholds:** All anomaly detection thresholds now configurable via CLI flags.
+    - `--threshold-large-first EUR`: Min € for first-time large purchase (default: 150)
+    - `--threshold-large-mult X`: Multiplier of merchant avg (default: 2.0)
+    - `--threshold-daily-mult X`: Daily spending spike multiplier (default: 2.5)
+    - `--threshold-daily-min EUR`: Min € for daily spike (default: 200)
+    - `--threshold-cat-mult X`: Category overspending multiplier (default: 1.8)
+    - `--threshold-new-days DAYS`: Days to consider merchant "new" (default: 7)
+  - **Week-over-Week Trends:** New report section showing weekly spending patterns.
+    - 4-week rolling average and velocity indicators (accelerating/decelerating/stable)
+    - WoW change percentages with visual status (🔴🟡🟢)
+    - Transaction count per week
+  - **JSON Support:** Weekly trends included in JSON output.
 
 ## Usage
 
@@ -111,6 +124,17 @@ python3 -m src.tracker.cli --input my_transactions.csv --alerts-only --format js
 
 # Use custom category goals file
 python3 -m src.tracker.cli --input my_transactions.csv --category-goals my_goals.csv
+
+# Customize alert thresholds (stricter detection)
+python3 -m src.tracker.cli --input my_transactions.csv \
+  --threshold-large-first 100 \
+  --threshold-daily-mult 2.0 \
+  --threshold-new-days 14
+
+# Lenient thresholds (fewer alerts)
+python3 -m src.tracker.cli --input my_transactions.csv \
+  --threshold-large-first 250 \
+  --threshold-daily-min 500
 ```
 
 ## Structure
