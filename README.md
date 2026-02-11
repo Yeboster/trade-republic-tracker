@@ -64,6 +64,13 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
     - **Category Overspending:** Alerts when category spending exceeds 80% of 3-month average.
   - **Alerts-Only Mode:** New `--alerts-only` flag shows only alerts (skip full report).
   - **JSON Support:** Alerts included in JSON output for integration with notification systems.
+- **Iteration 16 (Category Goals):** **Completed (2026-02-11).**
+  - **Per-Category Budget Limits:** Set monthly spending limits for individual categories (Food, Entertainment, Transport, etc.).
+  - **Visual Progress Tracking:** Progress bars with status indicators (✅🟢🟡🔴) for each category.
+  - **Projected Overspending Warnings:** Alerts when projected to exceed category limits.
+  - **Goals CSV:** Configurable via `data/category_goals.csv`.
+  - **CLI Integration:** New `--category-goals PATH` flag for custom goals file.
+  - **JSON Support:** Category goals progress included in JSON output.
 
 ## Usage
 
@@ -101,6 +108,9 @@ python3 -m src.tracker.cli --input my_transactions.csv --alerts-only
 
 # Alerts as JSON (for integrations/notifications)
 python3 -m src.tracker.cli --input my_transactions.csv --alerts-only --format json
+
+# Use custom category goals file
+python3 -m src.tracker.cli --input my_transactions.csv --category-goals my_goals.csv
 ```
 
 ## Structure

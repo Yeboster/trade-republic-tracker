@@ -46,6 +46,8 @@ async def main():
                         help="Preview auto-apply changes without writing to CSV")
     parser.add_argument("--alerts-only", action="store_true",
                         help="Show only spending alerts (skip full report)")
+    parser.add_argument("--category-goals", type=str, metavar="PATH",
+                        help="Path to category goals CSV (default: data/category_goals.csv)")
     
     args = parser.parse_args()
 
@@ -201,7 +203,7 @@ async def main():
 
     # 2. Auto-Apply High Confidence Categories
     if args.auto_apply and transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
         suggestions = analyzer.get_high_confidence_suggestions(threshold=args.auto_apply_threshold)
         
         if suggestions:
@@ -226,7 +228,7 @@ async def main():
 
     # 3. Export Category Suggestions
     if args.export_suggestions and transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
         count = analyzer.export_category_suggestions(args.export_suggestions)
         if count > 0:
             print(f"\n✅ Exported {count} category suggestions to: {args.export_suggestions}")
@@ -236,7 +238,7 @@ async def main():
 
     # 4. Analyze
     if transactions:
-        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals)
         
         # Determine format
         output_format = args.format

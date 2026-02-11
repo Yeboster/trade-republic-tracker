@@ -28,9 +28,37 @@ class PortfolioAnalyzer:
     Full portfolio analysis: card spending, investments, and combined overview.
     """
 
-    def __init__(self, transactions: List[Dict], budget: float = None):
+    def __init__(self, transactions: List[Dict], budget: float = None, category_goals_path: str = None):
         self.transactions = [t for t in transactions if self._is_executed(t)]
         self.budget = budget  # Optional monthly spending budget
+        self.category_goals = self._load_category_goals(category_goals_path)
+        self._category_goals_data = []  # For JSON export
+
+    def _load_category_goals(self, path: str) -> Dict[str, float]:
+        """Load per-category monthly budget limits from CSV."""
+        goals = {}
+        if not path:
+            # Default path
+            default_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'category_goals.csv')
+            if os.path.exists(default_path):
+                path = default_path
+        
+        if path and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        cat = row.get('category', '').strip()
+                        limit = row.get('monthly_limit', '').strip()
+                        if cat and limit:
+                            try:
+                                goals[cat] = float(limit)
+                            except ValueError:
+                                continue
+                logger.debug(f"Loaded {len(goals)} category goals from {path}")
+            except Exception as e:
+                logger.warning(f"Failed to load category goals: {e}")
+        return goals
 
     @staticmethod
     def _is_executed(txn: Dict) -> bool:
@@ -46,7 +74,8 @@ class PortfolioAnalyzer:
         sections = []
         sections.append(self._overview_section(card_txns, invest_txns, transfer_in, transfer_out))
         sections.append(self._spending_insights_section(card_txns, transfer_in))
-        sections.append(self._alerts_section(card_txns))  # NEW: Spending Alerts
+        sections.append(self._category_goals_section(card_txns))  # Category budget goals
+        sections.append(self._alerts_section(card_txns))  # Spending Alerts
         sections.append(self._card_section(card_txns))
         sections.append(self._subscription_section(card_txns))
         sections.append(self._uncategorized_section(card_txns))
@@ -218,6 +247,97 @@ class PortfolioAnalyzer:
                 lines.append(f"    ⚠️  Projected to exceed budget by {overage:,.2f}")
 
         return "\n".join(lines)
+
+    # ── Category Goals (Per-Category Budgets) ───────────────────────
+
+    def _category_goals_section(self, card_txns) -> str:
+        """
+        Show progress against per-category monthly budget goals.
+        """
+        if not self.category_goals or not card_txns:
+            return ""
+
+        # Get current month
+        now = datetime.now()
+        current_month = now.strftime("%Y-%m")
+        day_of_month = now.day
+        days_in_month = (datetime(now.year, now.month % 12 + 1, 1) - timedelta(days=1)).day if now.month < 12 else 31
+
+        # Calculate spending by category for current month
+        cat_spending = defaultdict(float)
+        for t in card_txns:
+            month = _parse_month(t)
+            if month == current_month and t["normalized_amount"] < 0:
+                cat = t.get("spending_category", "Other") or "Other"
+                cat_spending[cat] += abs(t["normalized_amount"])
+
+        lines = [
+            "── 🎯 CATEGORY GOALS ────────────────────",
+            f"  Progress for {current_month} (Day {day_of_month}/{days_in_month})",
+            ""
+        ]
+
+        # Expected progress percentage
+        expected_pct = (day_of_month / days_in_month) * 100
+
+        goals_data = []
+        for cat, limit in sorted(self.category_goals.items(), key=lambda x: x[1], reverse=True):
+            spent = cat_spending.get(cat, 0)
+            remaining = limit - spent
+            pct_used = (spent / limit * 100) if limit > 0 else 0
+            projected = (spent / day_of_month * days_in_month) if day_of_month > 0 else spent
+
+            # Status indicator
+            if pct_used >= 100:
+                status = "🔴"
+                status_text = "OVER"
+            elif pct_used > expected_pct + 15:
+                status = "🟡"
+                status_text = "HIGH"
+            elif pct_used > expected_pct:
+                status = "🟢"
+                status_text = "OK"
+            else:
+                status = "✅"
+                status_text = "GOOD"
+
+            # Progress bar (10 chars)
+            filled = int(min(pct_used, 100) / 10)
+            bar = "█" * filled + "░" * (10 - filled)
+
+            lines.append(f"  {cat:<15s} {status} [{bar}] {pct_used:>5.1f}%")
+            lines.append(f"    €{spent:>7,.0f} / €{limit:>7,.0f}  (rem: €{max(0,remaining):,.0f})")
+            if projected > limit:
+                lines.append(f"    ⚠️  Projected: €{projected:,.0f}")
+            lines.append("")
+
+            goals_data.append({
+                "category": cat,
+                "limit": limit,
+                "spent": spent,
+                "remaining": max(0, remaining),
+                "percent_used": round(pct_used, 1),
+                "projected": round(projected, 2),
+                "status": status_text,
+                "on_track": pct_used <= expected_pct + 15
+            })
+
+        # Store for JSON output
+        self._category_goals_data = goals_data
+
+        # Summary
+        total_goals_limit = sum(self.category_goals.values())
+        total_goals_spent = sum(cat_spending.get(cat, 0) for cat in self.category_goals)
+        on_track_count = sum(1 for g in goals_data if g["on_track"])
+        
+        lines.append(f"  Summary: {on_track_count}/{len(goals_data)} categories on track")
+        lines.append(f"  Goals Total: €{total_goals_spent:,.0f} / €{total_goals_limit:,.0f}")
+
+        return "\n".join(lines)
+
+    def get_category_goals_data(self) -> list:
+        """Return category goals progress data (call after generate_report)."""
+        return getattr(self, '_category_goals_data', [])
 
     # ── Spending Alerts (Anomaly Detection) ─────────────────────────
 
@@ -1101,6 +1221,10 @@ class PortfolioAnalyzer:
         # Uncategorized merchants with AI suggestions
         uncategorized_merchants = self._get_uncategorized_with_confidence(card_txns)
 
+        # Generate category goals data
+        self._category_goals_section(card_txns)
+        category_goals = getattr(self, '_category_goals_data', [])
+
         # Generate alerts (triggers _alerts_section to populate self._alerts)
         self._alerts_section(card_txns)
         alerts = getattr(self, '_alerts', [])
@@ -1137,6 +1261,7 @@ class PortfolioAnalyzer:
                 "history": budget_history
             } if self.budget else None,
             "uncategorized": uncategorized_merchants,
+            "category_goals": category_goals if category_goals else None,
         }
 
     def _detect_subscriptions(self, card_txns: List[Dict]) -> List[Dict]:
