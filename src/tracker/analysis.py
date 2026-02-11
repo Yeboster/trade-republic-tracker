@@ -26,8 +26,9 @@ class PortfolioAnalyzer:
     Full portfolio analysis: card spending, investments, and combined overview.
     """
 
-    def __init__(self, transactions: List[Dict]):
+    def __init__(self, transactions: List[Dict], budget: float = None):
         self.transactions = [t for t in transactions if self._is_executed(t)]
+        self.budget = budget  # Optional monthly spending budget
 
     @staticmethod
     def _is_executed(txn: Dict) -> bool:
@@ -187,6 +188,30 @@ class PortfolioAnalyzer:
             if savings_rate < 0:
                 lines.append(f"    ⚠️  Spending > Deposits")
 
+        # Budget tracking
+        if self.budget and self.budget > 0:
+            lines.append("")
+            lines.append("  Budget Tracker:")
+            lines.append(f"    Monthly Budget:      {self.budget:>10,.2f}")
+            lines.append(f"    Spent (MTD):         {current_spend:>10,.2f}")
+            remaining = self.budget - current_spend
+            pct_used = (current_spend / self.budget) * 100
+            lines.append(f"    Remaining:           {remaining:>10,.2f} ({100-pct_used:.0f}%)")
+            
+            # Budget pace check
+            expected_pct = (day_of_month / days_in_month) * 100
+            if pct_used > expected_pct + 15:
+                lines.append(f"    🔴 Over pace: {pct_used:.0f}% used at day {day_of_month}/{days_in_month}")
+            elif pct_used > expected_pct:
+                lines.append(f"    🟡 Slightly over pace: {pct_used:.0f}% used")
+            else:
+                lines.append(f"    🟢 On track: {pct_used:.0f}% used")
+            
+            # Projected vs budget
+            if projected_spend > self.budget:
+                overage = projected_spend - self.budget
+                lines.append(f"    ⚠️  Projected to exceed budget by {overage:,.2f}")
+
         return "\n".join(lines)
 
     # ── Card Spending ───────────────────────────────────────────────
@@ -307,12 +332,13 @@ class PortfolioAnalyzer:
 
             avg_interval = sum(intervals) / len(intervals)
             
-            # Monthly (25-35 days) or Yearly (360-370 days)
+            # Weekly (5-9 days), Monthly (25-35 days), or Yearly (360-370 days)
+            is_weekly = 5 <= avg_interval <= 9
             is_monthly = 25 <= avg_interval <= 35
             is_yearly = 360 <= avg_interval <= 370
 
-            if is_monthly or is_yearly:
-                freq = "Monthly" if is_monthly else "Yearly"
+            if is_weekly or is_monthly or is_yearly:
+                freq = "Weekly" if is_weekly else ("Monthly" if is_monthly else "Yearly")
                 last_date = _parse_month(txns[-1]) # Just show YYYY-MM
                 potential_subs.append({
                     "merchant": merchant,
@@ -337,7 +363,9 @@ class PortfolioAnalyzer:
         total_monthly = 0
         for sub in potential_subs:
             lines.append(f"  {sub['merchant']:<30s}  {sub['amount']:>10.2f}  {sub['frequency']:<8s}  {sub['last_seen']}")
-            if sub['frequency'] == "Monthly":
+            if sub['frequency'] == "Weekly":
+                total_monthly += sub["amount"] * 4.33  # ~4.33 weeks/month
+            elif sub['frequency'] == "Monthly":
                 total_monthly += sub["amount"]
             elif sub['frequency'] == "Yearly":
                 total_monthly += sub["amount"] / 12

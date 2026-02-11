@@ -29,6 +29,7 @@ async def main():
     # New features
     parser.add_argument("--map", action="append", help="Map merchant to category (format: 'Merchant Name=Category')")
     parser.add_argument("--list-merchants", action="store_true", help="List all unique merchants and exit (useful for LLM categorization)")
+    parser.add_argument("--budget", type=float, help="Monthly spending budget (EUR). Shows alerts if exceeded.")
     
     args = parser.parse_args()
 
@@ -184,7 +185,7 @@ async def main():
 
     # 2. Analyze
     if transactions:
-        analyzer = PortfolioAnalyzer(transactions)
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
         report = analyzer.generate_report()
         print(f"\n{report}\n")
     else:

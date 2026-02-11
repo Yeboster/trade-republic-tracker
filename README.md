@@ -33,6 +33,9 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **Year-over-Year Comparison:** Shows same month last year and % change.
   - **Savings Rate:** Calculates deposits vs spending ratio for the month.
   - **Pace Indicators:** Visual warnings (⚠️/✅) when spending pace is significantly above/below recent averages.
+- **Iteration 10 (Budget & Weekly Subs):** **Completed (2026-02-11).**
+  - **Weekly Subscription Detection:** Extended subscription heuristics to detect weekly recurring payments (5-9 day intervals).
+  - **Budget Tracking:** New `--budget` CLI flag to set monthly spending limit with visual pace indicators (🟢🟡🔴).
 
 ## Usage
 
@@ -44,6 +47,9 @@ pip install -r requirements.txt
 export TR_PHONE="+4912345678"
 export TR_PIN="1234"
 python3 -m src.tracker.cli --output my_transactions.csv
+
+# With budget tracking (EUR)
+python3 -m src.tracker.cli --budget 2000 --output my_transactions.csv
 ```
 
 ## Structure
