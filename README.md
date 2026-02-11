@@ -41,6 +41,10 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **AI Category Suggestions:** Heuristic pattern matching suggests categories based on common keywords.
   - **Export Workflow:** New `--export-suggestions PATH` flag exports uncategorized merchants to CSV for review.
   - **Report Section:** "Uncategorized Merchants" section shows top 15 merchants needing categorization with suggested categories.
+- **Iteration 12 (JSON Export & Budget History):** **Completed (2026-02-11).**
+  - **JSON Export:** New `--format json` and `--json-output PATH` flags for programmatic access to all report data.
+  - **Historical Budget Tracking:** New report section shows month-by-month budget adherence with visual indicators (🟢🟡🔴).
+  - **Structured Data:** JSON output includes summary, spending by category, top merchants, subscriptions, monthly breakdown, and budget history.
 
 ## Usage
 
@@ -59,6 +63,10 @@ python3 -m src.tracker.cli --budget 2000 --output my_transactions.csv
 # Export uncategorized merchants for review
 python3 -m src.tracker.cli --input my_transactions.csv --export-suggestions uncategorized.csv
 # Then: Edit uncategorized.csv, fill 'Category' column, append to data/categories.csv
+
+# JSON output (for scripts/integrations)
+python3 -m src.tracker.cli --input my_transactions.csv --format json
+python3 -m src.tracker.cli --input my_transactions.csv --json-output report.json --budget 2000
 ```
 
 ## Structure

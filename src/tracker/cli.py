@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import sys
+import json
 from .client import TradeRepublicClient
 from .timeline import TimelineManager
 from .analysis import PortfolioAnalyzer
@@ -32,6 +33,10 @@ async def main():
     parser.add_argument("--budget", type=float, help="Monthly spending budget (EUR). Shows alerts if exceeded.")
     parser.add_argument("--export-suggestions", type=str, metavar="PATH",
                         help="Export uncategorized merchants to CSV for review (with AI-suggested categories)")
+    parser.add_argument("--format", choices=["text", "json"], default="text",
+                        help="Output format for the report (default: text)")
+    parser.add_argument("--json-output", type=str, metavar="PATH",
+                        help="Write JSON report to file (implies --format json)")
     
     args = parser.parse_args()
 
@@ -198,8 +203,25 @@ async def main():
     # 3. Analyze
     if transactions:
         analyzer = PortfolioAnalyzer(transactions, budget=args.budget)
-        report = analyzer.generate_report()
-        print(f"\n{report}\n")
+        
+        # Determine format
+        output_format = args.format
+        if args.json_output:
+            output_format = "json"
+        
+        if output_format == "json":
+            report_data = analyzer.generate_json_report()
+            json_output = json.dumps(report_data, indent=2, default=str, ensure_ascii=False)
+            
+            if args.json_output:
+                with open(args.json_output, "w", encoding="utf-8") as f:
+                    f.write(json_output)
+                logger.info(f"JSON report written to {args.json_output}")
+            else:
+                print(json_output)
+        else:
+            report = analyzer.generate_report()
+            print(f"\n{report}\n")
     else:
         logger.warning("No transactions available for analysis.")
 

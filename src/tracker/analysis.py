@@ -51,6 +51,7 @@ class PortfolioAnalyzer:
         sections.append(self._uncategorized_section(card_txns))
         sections.append(self._investment_section(invest_txns))
         sections.append(self._transfer_section(transfer_in, transfer_out))
+        sections.append(self._budget_history_section(card_txns))
         sections.append(self._monthly_section())
 
         return "\n\n".join(s for s in sections if s)
@@ -646,6 +647,233 @@ class PortfolioAnalyzer:
         lines.append(self._spending_chart(by_month))
 
         return "\n".join(lines)
+
+    # ── Historical Budget ───────────────────────────────────────
+
+    def _budget_history_section(self, card_txns) -> str:
+        """
+        Show month-by-month budget adherence (if budget is set).
+        """
+        if not self.budget or self.budget <= 0:
+            return ""
+
+        # Calculate spending by month
+        by_month = defaultdict(float)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                month = _parse_month(t)
+                by_month[month] += abs(t["normalized_amount"])
+
+        if not by_month:
+            return ""
+
+        sorted_months = sorted(by_month.keys())
+        # Show last 6 months
+        recent_months = sorted_months[-6:]
+
+        lines = [
+            "── BUDGET HISTORY (Last 6 Months) ───────",
+            f"  Monthly Budget: {self.budget:,.2f} EUR",
+            "",
+            f"  {'Month':<10s}  {'Spent':>10s}  {'Budget':>10s}  {'Status':>12s}  {'Visual'}",
+            "  " + "─" * 60,
+        ]
+
+        over_count = 0
+        total_over = 0.0
+
+        for month in recent_months:
+            spent = by_month[month]
+            remaining = self.budget - spent
+            pct_used = (spent / self.budget) * 100
+
+            # Visual bar (max 20 chars)
+            bar_len = min(int(pct_used / 5), 20)  # 5% per char, max 20
+            bar = "█" * bar_len
+            
+            if spent > self.budget:
+                status = f"🔴 +{abs(remaining):,.0f}"
+                over_count += 1
+                total_over += abs(remaining)
+            elif pct_used > 90:
+                status = f"🟡 {remaining:,.0f}"
+            else:
+                status = f"🟢 {remaining:,.0f}"
+
+            lines.append(
+                f"  {month:<10s}  {spent:>10,.2f}  {self.budget:>10,.2f}  {status:>12s}  │{bar:<20s}│"
+            )
+
+        lines.append("")
+        if over_count > 0:
+            lines.append(f"  ⚠️  Over budget {over_count} of {len(recent_months)} months (total: {total_over:,.2f} over)")
+        else:
+            lines.append(f"  ✅ On budget all {len(recent_months)} months")
+
+        return "\n".join(lines)
+
+    # ── JSON Report ──────────────────────────────────────────────
+
+    def generate_json_report(self) -> dict:
+        """
+        Generate structured JSON report for programmatic use.
+        """
+        card_txns = [t for t in self.transactions if t.get("category") == "card"]
+        invest_txns = [t for t in self.transactions if t.get("category") == "investment"]
+        transfer_in = [t for t in self.transactions if t.get("category") == "transfer_in"]
+        transfer_out = [t for t in self.transactions if t.get("category") == "transfer_out"]
+
+        # Card metrics
+        card_spent = sum(abs(t["normalized_amount"]) for t in card_txns if t["normalized_amount"] < 0)
+        card_refund = sum(t["normalized_amount"] for t in card_txns if t["normalized_amount"] > 0)
+        
+        # Investment metrics
+        invest_out = sum(abs(t["normalized_amount"]) for t in invest_txns if t["normalized_amount"] < 0)
+        invest_in = sum(t["normalized_amount"] for t in invest_txns if t["normalized_amount"] > 0)
+        
+        # Transfer metrics
+        cash_in = sum(t["normalized_amount"] for t in transfer_in)
+        cash_out = sum(abs(t["normalized_amount"]) for t in transfer_out)
+
+        # Monthly breakdown
+        by_month = defaultdict(lambda: {"card": 0.0, "investment": 0.0, "deposits": 0.0, "withdrawals": 0.0})
+        for t in self.transactions:
+            month = _parse_month(t)
+            val = t.get("normalized_amount", 0)
+            cat = t.get("category", "other")
+            if cat == "card" and val < 0:
+                by_month[month]["card"] += abs(val)
+            elif cat == "investment" and val < 0:
+                by_month[month]["investment"] += abs(val)
+            elif cat == "transfer_in":
+                by_month[month]["deposits"] += val
+            elif cat == "transfer_out":
+                by_month[month]["withdrawals"] += abs(val)
+
+        # Spending by category
+        by_spending_cat = defaultdict(float)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                cat = t.get("spending_category", "Other") or "Other"
+                by_spending_cat[cat] += abs(t["normalized_amount"])
+
+        # Top merchants
+        merchants = defaultdict(float)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                merchants[t["merchant"]] += abs(t["normalized_amount"])
+        top_merchants = sorted(merchants.items(), key=lambda x: x[1], reverse=True)[:20]
+
+        # Subscriptions
+        subscriptions = self._detect_subscriptions(card_txns)
+
+        # Budget history
+        budget_history = None
+        if self.budget and self.budget > 0:
+            budget_history = self._budget_history(by_month)
+
+        return {
+            "generated_at": datetime.now().isoformat(),
+            "summary": {
+                "total_transactions": len(self.transactions),
+                "card_transactions": len(card_txns),
+                "investment_transactions": len(invest_txns),
+            },
+            "spending": {
+                "gross_spent": round(card_spent, 2),
+                "refunds": round(card_refund, 2),
+                "net_spent": round(card_spent - card_refund, 2),
+            },
+            "investments": {
+                "total_bought": round(invest_out, 2),
+                "total_received": round(invest_in, 2),
+                "net_invested": round(invest_out - invest_in, 2),
+            },
+            "cash_flow": {
+                "deposits": round(cash_in, 2),
+                "withdrawals": round(cash_out, 2),
+                "net": round(cash_in - cash_out, 2),
+            },
+            "spending_by_category": {k: round(v, 2) for k, v in sorted(by_spending_cat.items(), key=lambda x: x[1], reverse=True)},
+            "top_merchants": [{"merchant": m, "spent": round(v, 2)} for m, v in top_merchants],
+            "subscriptions": subscriptions,
+            "monthly": {month: {k: round(v, 2) for k, v in data.items()} for month, data in sorted(by_month.items())},
+            "budget": {
+                "monthly_limit": self.budget,
+                "history": budget_history
+            } if self.budget else None,
+        }
+
+    def _detect_subscriptions(self, card_txns: List[Dict]) -> List[Dict]:
+        """Helper to detect subscriptions for JSON output."""
+        by_merchant = defaultdict(list)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                by_merchant[t["merchant"]].append(t)
+
+        results = []
+        for merchant, txns in by_merchant.items():
+            if len(txns) < 2:
+                continue
+            txns.sort(key=lambda x: x.get("timestamp", 0))
+            amounts = [abs(t["normalized_amount"]) for t in txns]
+            avg_amount = sum(amounts) / len(amounts)
+            if not all(0.9 * avg_amount <= a <= 1.1 * avg_amount for a in amounts):
+                continue
+            timestamps = []
+            for t in txns:
+                ts = t.get("timestamp", 0)
+                if isinstance(ts, str):
+                    try:
+                        ts = ts.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(ts)
+                        timestamps.append(dt.timestamp())
+                    except ValueError:
+                        pass
+                elif isinstance(ts, (int, float)):
+                    timestamps.append(ts / 1000 if ts > 10**11 else ts)
+            if len(timestamps) < 2:
+                continue
+            intervals = [(timestamps[i] - timestamps[i-1]) / 86400 for i in range(1, len(timestamps))]
+            if not intervals:
+                continue
+            avg_interval = sum(intervals) / len(intervals)
+            if 5 <= avg_interval <= 9:
+                freq = "weekly"
+            elif 25 <= avg_interval <= 35:
+                freq = "monthly"
+            elif 360 <= avg_interval <= 370:
+                freq = "yearly"
+            else:
+                continue
+            results.append({
+                "merchant": merchant,
+                "amount": round(avg_amount, 2),
+                "frequency": freq,
+                "transaction_count": len(txns),
+            })
+        return sorted(results, key=lambda x: x["amount"], reverse=True)
+
+    def _budget_history(self, by_month: dict) -> List[Dict]:
+        """Calculate historical budget adherence per month."""
+        if not self.budget:
+            return []
+        
+        history = []
+        for month in sorted(by_month.keys()):
+            spent = by_month[month]["card"]
+            remaining = self.budget - spent
+            pct_used = (spent / self.budget) * 100 if self.budget > 0 else 0
+            status = "under" if spent <= self.budget else "over"
+            history.append({
+                "month": month,
+                "spent": round(spent, 2),
+                "budget": self.budget,
+                "remaining": round(remaining, 2),
+                "pct_used": round(pct_used, 1),
+                "status": status,
+            })
+        return history
 
     def _spending_chart(self, by_month: dict, bar_width: int = 40) -> str:
         """Generate a simple ASCII bar chart for monthly card spending."""
