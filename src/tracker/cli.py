@@ -44,6 +44,8 @@ async def main():
                         help="Minimum confidence score for auto-apply (default: 0.90)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview auto-apply changes without writing to CSV")
+    parser.add_argument("--alerts-only", action="store_true",
+                        help="Show only spending alerts (skip full report)")
     
     args = parser.parse_args()
 
@@ -243,6 +245,15 @@ async def main():
         
         if output_format == "json":
             report_data = analyzer.generate_json_report()
+            
+            # Filter to alerts only if requested
+            if args.alerts_only:
+                report_data = {
+                    "generated_at": report_data.get("generated_at"),
+                    "alerts": report_data.get("alerts", []),
+                    "alert_count": len(report_data.get("alerts", []))
+                }
+            
             json_output = json.dumps(report_data, indent=2, default=str, ensure_ascii=False)
             
             if args.json_output:
@@ -252,8 +263,47 @@ async def main():
             else:
                 print(json_output)
         else:
-            report = analyzer.generate_report()
-            print(f"\n{report}\n")
+            if args.alerts_only:
+                # Generate only the alerts section
+                report = analyzer.generate_report()  # This populates _alerts
+                alerts = analyzer.get_alerts()
+                
+                if alerts:
+                    print("\n🚨 SPENDING ALERTS")
+                    print("=" * 50)
+                    
+                    # Group by type
+                    cat_spikes = [a for a in alerts if a["type"] == "category_spike"]
+                    daily_spikes = [a for a in alerts if a["type"] == "daily_spike"]
+                    large_txns = [a for a in alerts if a["type"] in ("large_outlier", "large_first")]
+                    new_vendors = [a for a in alerts if a["type"] == "new_merchant"]
+                    
+                    if cat_spikes:
+                        print("\n📊 Category Overspending:")
+                        for a in cat_spikes:
+                            print(f"   {a['message']}")
+                    
+                    if daily_spikes:
+                        print("\n📅 High Spending Days:")
+                        for a in sorted(daily_spikes, key=lambda x: x["amount"], reverse=True)[:5]:
+                            print(f"   • {a['date']}: €{a['amount']:.2f} (avg: €{a['average']:.0f})")
+                    
+                    if large_txns:
+                        print("\n💸 Unusual Transactions:")
+                        for a in large_txns[:5]:
+                            print(f"   • {a['message']}")
+                    
+                    if new_vendors:
+                        print("\n🆕 New Merchants This Week:")
+                        for a in new_vendors[:5]:
+                            print(f"   • {a['merchant'][:35]} (€{a['total_spent']:.2f})")
+                    
+                    print(f"\n   Total alerts: {len(alerts)}")
+                else:
+                    print("\n✅ No spending alerts detected.")
+            else:
+                report = analyzer.generate_report()
+                print(f"\n{report}\n")
     else:
         logger.warning("No transactions available for analysis.")
 

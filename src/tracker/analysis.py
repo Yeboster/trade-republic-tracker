@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 import logging
 import os
@@ -46,6 +46,7 @@ class PortfolioAnalyzer:
         sections = []
         sections.append(self._overview_section(card_txns, invest_txns, transfer_in, transfer_out))
         sections.append(self._spending_insights_section(card_txns, transfer_in))
+        sections.append(self._alerts_section(card_txns))  # NEW: Spending Alerts
         sections.append(self._card_section(card_txns))
         sections.append(self._subscription_section(card_txns))
         sections.append(self._uncategorized_section(card_txns))
@@ -217,6 +218,232 @@ class PortfolioAnalyzer:
                 lines.append(f"    ⚠️  Projected to exceed budget by {overage:,.2f}")
 
         return "\n".join(lines)
+
+    # ── Spending Alerts (Anomaly Detection) ─────────────────────────
+
+    def _alerts_section(self, card_txns) -> str:
+        """
+        Detect and report spending anomalies:
+        1. Unusually large transactions (>2x merchant average or >150€)
+        2. Daily spending spikes (>2x daily average)
+        3. New merchants (first-time seen)
+        4. Category overspending vs historical average
+        """
+        if not card_txns:
+            return ""
+
+        alerts = []
+        now = datetime.now()
+
+        # ── 1. Large Transaction Detection ──
+        # Group by merchant to find outliers
+        merchant_amounts = defaultdict(list)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:  # Only payments
+                merchant_amounts[t["merchant"]].append(abs(t["normalized_amount"]))
+
+        large_txn_alerts = []
+        for t in card_txns:
+            if t["normalized_amount"] >= 0:
+                continue
+            amount = abs(t["normalized_amount"])
+            merchant = t["merchant"]
+            amounts = merchant_amounts.get(merchant, [])
+            
+            # Skip if only 1 transaction (can't detect anomaly)
+            if len(amounts) < 2:
+                # But flag if it's a big first-time transaction (>150€)
+                if amount > 150:
+                    ts = t.get("timestamp")
+                    date_str = self._format_date(ts)
+                    large_txn_alerts.append({
+                        "type": "large_first",
+                        "merchant": merchant,
+                        "amount": amount,
+                        "date": date_str,
+                        "message": f"Large first-time purchase: {merchant[:25]} €{amount:.2f}"
+                    })
+                continue
+
+            avg = sum(amounts) / len(amounts)
+            # Flag if >2x average for this merchant
+            if amount > avg * 2 and amount > 50:
+                ts = t.get("timestamp")
+                date_str = self._format_date(ts)
+                large_txn_alerts.append({
+                    "type": "large_outlier",
+                    "merchant": merchant,
+                    "amount": amount,
+                    "average": avg,
+                    "date": date_str,
+                    "message": f"Unusual amount at {merchant[:20]}: €{amount:.2f} (avg: €{avg:.2f})"
+                })
+
+        # Keep only most recent 5 large transaction alerts
+        large_txn_alerts.sort(key=lambda x: x.get("date", ""), reverse=True)
+        alerts.extend(large_txn_alerts[:5])
+
+        # ── 2. Daily Spending Spike Detection ──
+        daily_spending = defaultdict(float)
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                date_str = self._format_date(t.get("timestamp"), "%Y-%m-%d")
+                if date_str and date_str != "Unknown":
+                    daily_spending[date_str] += abs(t["normalized_amount"])
+
+        if len(daily_spending) > 7:  # Need at least a week of data
+            sorted_days = sorted(daily_spending.keys())
+            # Calculate average daily spending (excluding top 5% to reduce outlier impact)
+            values = sorted(daily_spending.values())
+            cutoff = int(len(values) * 0.95)
+            baseline_values = values[:cutoff] if cutoff > 0 else values
+            avg_daily = sum(baseline_values) / len(baseline_values) if baseline_values else 0
+
+            # Flag days with >2.5x average spending
+            spike_threshold = max(avg_daily * 2.5, 200)  # At least 200€ to flag
+            for day in sorted_days[-30:]:  # Check last 30 days
+                if daily_spending[day] > spike_threshold:
+                    alerts.append({
+                        "type": "daily_spike",
+                        "date": day,
+                        "amount": daily_spending[day],
+                        "average": avg_daily,
+                        "message": f"High spending day: {day} - €{daily_spending[day]:.2f} (avg: €{avg_daily:.0f})"
+                    })
+
+        # ── 3. New Merchant Detection (Last 7 days) ──
+        # Find merchants that first appeared in the last 7 days
+        merchant_first_seen = {}
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                merchant = t["merchant"]
+                ts = t.get("timestamp")
+                try:
+                    if isinstance(ts, (int, float)):
+                        dt = datetime.fromtimestamp(ts / 1000 if ts > 10**11 else ts)
+                    elif isinstance(ts, str):
+                        ts = ts.replace("+0000", "+00:00").replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(ts)
+                    else:
+                        continue
+                    
+                    if merchant not in merchant_first_seen:
+                        merchant_first_seen[merchant] = dt
+                    elif dt < merchant_first_seen[merchant]:
+                        merchant_first_seen[merchant] = dt
+                except:
+                    continue
+
+        week_ago = now - timedelta(days=7)
+        new_merchants = []
+        for merchant, first_dt in merchant_first_seen.items():
+            if first_dt > week_ago:
+                total = sum(abs(t["normalized_amount"]) for t in card_txns 
+                           if t["merchant"] == merchant and t["normalized_amount"] < 0)
+                new_merchants.append({
+                    "type": "new_merchant",
+                    "merchant": merchant,
+                    "first_seen": first_dt.strftime("%Y-%m-%d"),
+                    "total_spent": total,
+                    "message": f"New merchant: {merchant[:30]} (€{total:.2f})"
+                })
+
+        # Sort by amount and take top 5
+        new_merchants.sort(key=lambda x: x["total_spent"], reverse=True)
+        alerts.extend(new_merchants[:5])
+
+        # ── 4. Category Overspending ──
+        # Compare current month category spending to 3-month average
+        cat_by_month = defaultdict(lambda: defaultdict(float))
+        for t in card_txns:
+            if t["normalized_amount"] < 0:
+                month = _parse_month(t)
+                cat = t.get("spending_category", "Other") or "Other"
+                cat_by_month[month][cat] += abs(t["normalized_amount"])
+
+        sorted_months = sorted(cat_by_month.keys())
+        if len(sorted_months) >= 2:
+            current_month = sorted_months[-1]
+            historical_months = sorted_months[:-1][-3:]  # Last 3 months before current
+            
+            if historical_months:
+                for cat in cat_by_month[current_month]:
+                    current_spend = cat_by_month[current_month][cat]
+                    historical_avg = sum(cat_by_month[m].get(cat, 0) for m in historical_months) / len(historical_months)
+                    
+                    # Flag if >80% over average and at least 50€ over
+                    if historical_avg > 0 and current_spend > historical_avg * 1.8 and current_spend - historical_avg > 50:
+                        alerts.append({
+                            "type": "category_spike",
+                            "category": cat,
+                            "current": current_spend,
+                            "average": historical_avg,
+                            "month": current_month,
+                            "message": f"⚠️ {cat}: €{current_spend:.0f} this month (avg: €{historical_avg:.0f})"
+                        })
+
+        # Store alerts for JSON output
+        self._alerts = alerts
+
+        if not alerts:
+            return ""
+
+        lines = [
+            "── 🚨 SPENDING ALERTS ───────────────────",
+        ]
+
+        # Group by type
+        cat_spikes = [a for a in alerts if a["type"] == "category_spike"]
+        daily_spikes = [a for a in alerts if a["type"] == "daily_spike"]
+        large_txns = [a for a in alerts if a["type"] in ("large_outlier", "large_first")]
+        new_vendors = [a for a in alerts if a["type"] == "new_merchant"]
+
+        if cat_spikes:
+            lines.append("")
+            lines.append("  Category Overspending:")
+            for a in cat_spikes[:5]:
+                lines.append(f"    {a['message']}")
+
+        if daily_spikes:
+            lines.append("")
+            lines.append("  High Spending Days:")
+            for a in sorted(daily_spikes, key=lambda x: x["amount"], reverse=True)[:3]:
+                lines.append(f"    • {a['date']}: €{a['amount']:.2f}")
+
+        if large_txns:
+            lines.append("")
+            lines.append("  Unusual Transactions:")
+            for a in large_txns[:5]:
+                lines.append(f"    • {a['message']}")
+
+        if new_vendors:
+            lines.append("")
+            lines.append("  New Merchants This Week:")
+            for a in new_vendors[:5]:
+                lines.append(f"    • {a['merchant'][:30]} (€{a['total_spent']:.2f})")
+
+        lines.append("")
+        lines.append(f"  Total alerts: {len(alerts)}")
+
+        return "\n".join(lines)
+
+    def _format_date(self, ts, fmt: str = "%Y-%m-%d") -> str:
+        """Helper to format timestamp to date string."""
+        try:
+            if isinstance(ts, (int, float)):
+                dt = datetime.fromtimestamp(ts / 1000 if ts > 10**11 else ts)
+            elif isinstance(ts, str):
+                ts = ts.replace("+0000", "+00:00").replace("Z", "+00:00")
+                dt = datetime.fromisoformat(ts)
+            else:
+                return "Unknown"
+            return dt.strftime(fmt)
+        except:
+            return "Unknown"
+
+    def get_alerts(self) -> list:
+        """Return detected spending alerts (call after generate_report)."""
+        return getattr(self, '_alerts', [])
 
     # ── Card Spending ───────────────────────────────────────────────
 
@@ -874,6 +1101,10 @@ class PortfolioAnalyzer:
         # Uncategorized merchants with AI suggestions
         uncategorized_merchants = self._get_uncategorized_with_confidence(card_txns)
 
+        # Generate alerts (triggers _alerts_section to populate self._alerts)
+        self._alerts_section(card_txns)
+        alerts = getattr(self, '_alerts', [])
+
         return {
             "generated_at": datetime.now().isoformat(),
             "summary": {
@@ -899,6 +1130,7 @@ class PortfolioAnalyzer:
             "spending_by_category": {k: round(v, 2) for k, v in sorted(by_spending_cat.items(), key=lambda x: x[1], reverse=True)},
             "top_merchants": [{"merchant": m, "spent": round(v, 2)} for m, v in top_merchants],
             "subscriptions": subscriptions,
+            "alerts": alerts,  # NEW: Spending alerts
             "monthly": {month: {k: round(v, 2) for k, v in data.items()} for month, data in sorted(by_month.items())},
             "budget": {
                 "monthly_limit": self.budget,

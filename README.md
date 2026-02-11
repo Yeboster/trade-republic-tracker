@@ -55,6 +55,15 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **Configurable Threshold:** `--auto-apply-threshold` sets minimum confidence (default: 0.90 / 90%).
   - **Dry-Run Mode:** `--dry-run` previews changes without writing to CSV.
   - **Duplicate Detection:** Skips merchants already present in categories.csv.
+- **Iteration 15 (Spending Alerts & Anomaly Detection):** **Completed (2026-02-11).**
+  - **Anomaly Detection:** Automatic detection of unusual spending patterns.
+  - **Alert Types:**
+    - **Large Transactions:** Flags purchases >2x merchant average or >€150 first-time purchases.
+    - **Daily Spending Spikes:** Detects days with >2.5x average spending.
+    - **New Merchants:** Lists first-time merchants from the last 7 days.
+    - **Category Overspending:** Alerts when category spending exceeds 80% of 3-month average.
+  - **Alerts-Only Mode:** New `--alerts-only` flag shows only alerts (skip full report).
+  - **JSON Support:** Alerts included in JSON output for integration with notification systems.
 
 ## Usage
 
@@ -86,6 +95,12 @@ python3 -m src.tracker.cli --input my_transactions.csv --auto-apply --dry-run
 
 # Custom threshold (e.g., 85%)
 python3 -m src.tracker.cli --input my_transactions.csv --auto-apply --auto-apply-threshold 0.85
+
+# View spending alerts only (quick check for anomalies)
+python3 -m src.tracker.cli --input my_transactions.csv --alerts-only
+
+# Alerts as JSON (for integrations/notifications)
+python3 -m src.tracker.cli --input my_transactions.csv --alerts-only --format json
 ```
 
 ## Structure
