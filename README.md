@@ -28,6 +28,11 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
 - **Iteration 8 (Visualization):** **Completed (2026-02-11).**
   - **ASCII Spending Chart:** Monthly spending trend visualization showing last 12 months as horizontal bar chart.
   - Clean formatting with abbreviated month labels and auto-scaling bars.
+- **Iteration 9 (Spending Insights):** **Completed (2026-02-11).**
+  - **Month-to-Date Projection:** Extrapolates current month spending based on daily pace.
+  - **Year-over-Year Comparison:** Shows same month last year and % change.
+  - **Savings Rate:** Calculates deposits vs spending ratio for the month.
+  - **Pace Indicators:** Visual warnings (⚠️/✅) when spending pace is significantly above/below recent averages.
 
 ## Usage
 

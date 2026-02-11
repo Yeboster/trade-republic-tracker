@@ -42,13 +42,14 @@ class PortfolioAnalyzer:
 
         sections = []
         sections.append(self._overview_section(card_txns, invest_txns, transfer_in, transfer_out))
+        sections.append(self._spending_insights_section(card_txns, transfer_in))
         sections.append(self._card_section(card_txns))
         sections.append(self._subscription_section(card_txns))
         sections.append(self._investment_section(invest_txns))
         sections.append(self._transfer_section(transfer_in, transfer_out))
         sections.append(self._monthly_section())
 
-        return "\n\n".join(sections)
+        return "\n\n".join(s for s in sections if s)
 
     # ── Overview ────────────────────────────────────────────────────
 
@@ -90,6 +91,102 @@ class PortfolioAnalyzer:
             f"  Net Cash Added:      {net_cash_flow:>12,.2f}",
             "═══════════════════════════════════════",
         ]
+        return "\n".join(lines)
+
+    # ── Spending Insights ───────────────────────────────────────────
+
+    def _spending_insights_section(self, card_txns, transfer_in_txns) -> str:
+        """
+        Advanced spending metrics: averages, YoY comparison, savings rate.
+        """
+        if not card_txns:
+            return ""
+
+        # Calculate spending by month
+        by_month = defaultdict(float)
+        for t in card_txns:
+            month = _parse_month(t)
+            if t["normalized_amount"] < 0:
+                by_month[month] += abs(t["normalized_amount"])
+
+        sorted_months = sorted(by_month.keys())
+        if len(sorted_months) < 2:
+            return ""
+
+        # Current month and previous months
+        current_month = sorted_months[-1]
+        current_spend = by_month[current_month]
+        
+        # Calculate averages (excluding current incomplete month)
+        historical_months = sorted_months[:-1]
+        if historical_months:
+            avg_monthly = sum(by_month[m] for m in historical_months) / len(historical_months)
+        else:
+            avg_monthly = current_spend
+
+        # Last 3 months average (excluding current)
+        recent_months = historical_months[-3:] if len(historical_months) >= 3 else historical_months
+        avg_recent = sum(by_month[m] for m in recent_months) / len(recent_months) if recent_months else avg_monthly
+
+        # YoY comparison
+        try:
+            current_dt = datetime.strptime(current_month, "%Y-%m")
+            yoy_month = f"{current_dt.year - 1}-{current_dt.month:02d}"
+            yoy_spend = by_month.get(yoy_month, 0)
+            yoy_change = ((current_spend - yoy_spend) / yoy_spend * 100) if yoy_spend > 0 else None
+        except:
+            yoy_spend = 0
+            yoy_change = None
+
+        # Savings rate (deposits vs card spending this month)
+        deposits_by_month = defaultdict(float)
+        for t in transfer_in_txns:
+            month = _parse_month(t)
+            deposits_by_month[month] += t["normalized_amount"]
+        
+        current_deposits = deposits_by_month.get(current_month, 0)
+        savings_rate = ((current_deposits - current_spend) / current_deposits * 100) if current_deposits > 0 else None
+
+        # Month-to-date pace (extrapolate)
+        today = datetime.now()
+        day_of_month = today.day
+        days_in_month = 30  # Approximation
+        projected_spend = (current_spend / day_of_month) * days_in_month if day_of_month > 0 else current_spend
+
+        lines = [
+            "── SPENDING INSIGHTS ────────────────────",
+            f"  Current Month ({current_month}):",
+            f"    Spent (MTD):        {current_spend:>10,.2f}",
+            f"    Projected (30d):    {projected_spend:>10,.2f}",
+            "",
+            f"  Averages:",
+            f"    All-Time Monthly:   {avg_monthly:>10,.2f}",
+            f"    Recent (3mo):       {avg_recent:>10,.2f}",
+        ]
+
+        # MTD vs average indicator
+        pace_vs_avg = ((current_spend / day_of_month * days_in_month) / avg_recent - 1) * 100 if avg_recent > 0 and day_of_month > 0 else 0
+        if pace_vs_avg > 15:
+            lines.append(f"    ⚠️  Pace: +{pace_vs_avg:.0f}% above recent avg")
+        elif pace_vs_avg < -15:
+            lines.append(f"    ✅ Pace: {pace_vs_avg:.0f}% below recent avg")
+
+        lines.append("")
+        lines.append("  Year-over-Year:")
+        if yoy_spend > 0:
+            lines.append(f"    {yoy_month}:            {yoy_spend:>10,.2f}")
+            if yoy_change is not None:
+                direction = "↑" if yoy_change > 0 else "↓"
+                lines.append(f"    Change:              {direction} {abs(yoy_change):>8.1f}%")
+        else:
+            lines.append("    (No data for same month last year)")
+
+        if savings_rate is not None:
+            lines.append("")
+            lines.append(f"  Savings Rate (MTD):    {savings_rate:>9.1f}%")
+            if savings_rate < 0:
+                lines.append(f"    ⚠️  Spending > Deposits")
+
         return "\n".join(lines)
 
     # ── Card Spending ───────────────────────────────────────────────
