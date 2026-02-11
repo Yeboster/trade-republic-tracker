@@ -414,30 +414,43 @@ class PortfolioAnalyzer:
         # Limit to top 15
         top_uncategorized = frequent_uncategorized[:15]
         
-        # Try to suggest categories based on common keywords
+        # Try to suggest categories based on common keywords (with confidence)
         suggestions = []
         for merchant, data in top_uncategorized:
-            suggested = self._suggest_category(merchant)
+            category, confidence, reason = self._suggest_category(merchant, with_confidence=True)
             suggestions.append({
                 "merchant": merchant,
                 "count": data["count"],
                 "total": data["total"],
                 "last_seen": data["last_seen"],
-                "suggested": suggested
+                "suggested": category,
+                "confidence": confidence,
+                "reason": reason
             })
 
         lines = [
             "── UNCATEGORIZED MERCHANTS ──────────────",
             "  (Merchants with 2+ transactions in 'Other' category)",
             "",
-            f"  {'Merchant':<30s}  {'Total':>10s}  {'#':>4s}  {'Suggested'}",
-            "  " + "─" * 70,
+            f"  {'Merchant':<28s}  {'Total':>9s}  {'#':>3s}  {'Suggested':<14s}  {'Conf'}",
+            "  " + "─" * 72,
         ]
         
         for s in suggestions:
             sugg_text = s["suggested"] or "?"
+            # Confidence indicator: ●●● (high), ●●○ (medium), ●○○ (low), ○○○ (none)
+            conf = s["confidence"]
+            if conf >= 0.85:
+                conf_icon = "●●●"
+            elif conf >= 0.70:
+                conf_icon = "●●○"
+            elif conf > 0:
+                conf_icon = "●○○"
+            else:
+                conf_icon = "○○○"
+            
             lines.append(
-                f"  {s['merchant'][:30]:<30s}  {s['total']:>10.2f}  {s['count']:>4d}  {sugg_text}"
+                f"  {s['merchant'][:28]:<28s}  {s['total']:>9.2f}  {s['count']:>3d}  {sugg_text:<14s}  {conf_icon}"
             )
         
         lines.append("")
@@ -446,66 +459,137 @@ class PortfolioAnalyzer:
         
         return "\n".join(lines)
 
-    def _suggest_category(self, merchant: str) -> str:
+    def _suggest_category(self, merchant: str, with_confidence: bool = False):
         """
         Heuristic category suggestion based on common keywords.
-        Returns suggested category or None.
+        
+        Args:
+            merchant: Merchant name to analyze
+            with_confidence: If True, returns (category, confidence, reason) tuple
+                            If False, returns just category string (backward compatible)
+        
+        Returns:
+            If with_confidence=False: category string or None
+            If with_confidence=True: (category, confidence, reason) or (None, 0, None)
+                confidence: 0.0-1.0 score
+                reason: explanation of why this category was suggested
         """
         name = merchant.lower()
         
-        # Common patterns that indicate category
+        # Patterns with specificity weights (higher = more specific/confident)
+        # Format: (keywords, category, base_confidence, specificity_multiplier)
         patterns = [
-            # Food/Dining
-            (["restaurant", "ristorante", "bistro", "brasserie", "cafe", "caffè", "coffee", 
-              "pizza", "sushi", "kebab", "burger", "ramen", "trattoria", "osteria"], "Restaurant"),
-            (["bakery", "boulangerie", "patisserie", "pain"], "Grocery"),
-            (["bar ", " bar", "pub ", " pub"], "Restaurant"),
+            # Food/Dining - High confidence specific terms
+            (["ristorante", "trattoria", "osteria", "pizzeria"], "Restaurant", 0.95, 1.0),
+            (["restaurant", "bistro", "brasserie"], "Restaurant", 0.90, 1.0),
+            (["cafe", "caffè", "coffee"], "Restaurant", 0.75, 0.9),
+            (["pizza", "sushi", "kebab", "burger", "ramen"], "Restaurant", 0.80, 0.95),
+            (["bar ", " bar", "pub ", " pub"], "Restaurant", 0.65, 0.8),
+            (["boulangerie", "patisserie"], "Grocery", 0.90, 1.0),
+            (["bakery", "pain"], "Grocery", 0.75, 0.9),
             
-            # Shopping
-            (["market", "marche", "supermarket", "supermercato", "grocery", "epicerie", 
-              "alimentari", "potraviny"], "Grocery"),
-            (["shop", "store", "boutique", "magasin"], "Shopping"),
-            (["pharmacy", "pharmacie", "farmacia", "apotheke", "lekaren", "drogerie"], "Health"),
+            # Grocery - High confidence
+            (["supermarket", "supermercato", "supermarché"], "Grocery", 0.95, 1.0),
+            (["alimentari", "potraviny", "epicerie"], "Grocery", 0.90, 1.0),
+            (["market", "marche", "marché"], "Grocery", 0.70, 0.85),
+            (["grocery"], "Grocery", 0.85, 0.95),
             
-            # Transport
-            (["parking", "aparcament", "parcheggio", "park ", "garage"], "Transport"),
-            (["taxi", "cab ", "uber", "bolt", "lyft"], "Transport"),
-            (["gas", "fuel", "petrol", "essence", "station", "shell", "bp ", "esso", "total"], "Transport"),
-            (["train", "bus", "metro", "tram", "transit", "transport"], "Transport"),
-            (["rent a car", "car rental", "autonoleggio"], "Transport"),
+            # Shopping - Medium confidence (generic terms)
+            (["boutique"], "Shopping", 0.75, 0.9),
+            (["shop", "store", "magasin"], "Shopping", 0.55, 0.7),
             
-            # Entertainment
-            (["cinema", "movie", "film", "theatre", "theater", "teatro"], "Entertainment"),
-            (["museum", "musee", "museo", "gallery", "galerie"], "Entertainment"),
-            (["ticket", "billet", "biglietto", "entrada"], "Entertainment"),
-            (["sport", "gym", "fitness", "climbing", "padel", "tennis", "ski"], "Entertainment"),
-            (["zoo", "aquarium", "park", "parque"], "Entertainment"),
+            # Health/Pharmacy
+            (["pharmacie", "farmacia", "apotheke", "lekaren"], "Health", 0.95, 1.0),
+            (["pharmacy", "drogerie"], "Health", 0.85, 0.95),
+            (["doctor", "dentist", "medecin", "dentaire"], "Health", 0.90, 1.0),
+            (["clinic", "clinique", "klinik"], "Health", 0.85, 0.95),
             
-            # Travel
-            (["hotel", "hostel", "motel", "airbnb", "booking"], "Travel"),
-            (["airline", "flight", "aero", "airport"], "Travel"),
+            # Transport - High confidence specific
+            (["uber", "bolt", "lyft", "freenow"], "Transport", 0.95, 1.0),
+            (["taxi", "cab "], "Transport", 0.85, 0.95),
+            (["parking", "aparcament", "parcheggio"], "Transport", 0.90, 1.0),
+            (["shell", "bp ", "esso", "total", "eni ", "q8"], "Transport", 0.90, 1.0),
+            (["gas", "fuel", "petrol", "essence"], "Transport", 0.75, 0.85),
+            (["train", "bus", "metro", "tram", "sncf", "ratp", "bvg"], "Transport", 0.90, 1.0),
+            (["transit", "transport"], "Transport", 0.70, 0.8),
+            (["rent a car", "car rental", "autonoleggio", "sixt", "hertz", "avis"], "Transport", 0.95, 1.0),
+            (["park ", "garage"], "Transport", 0.60, 0.75),
+            
+            # Entertainment - High confidence
+            (["cinema", "cinéma", "kino"], "Entertainment", 0.95, 1.0),
+            (["movie", "film", "theatre", "theater", "teatro"], "Entertainment", 0.85, 0.95),
+            (["museum", "musée", "museo", "muzeum"], "Entertainment", 0.95, 1.0),
+            (["gallery", "galerie"], "Entertainment", 0.80, 0.9),
+            (["gym", "fitness", "crossfit"], "Entertainment", 0.90, 1.0),
+            (["sport", "climbing", "padel", "tennis", "ski"], "Entertainment", 0.80, 0.9),
+            (["ticket", "billet", "biglietto", "entrada"], "Entertainment", 0.60, 0.75),
+            (["zoo", "aquarium"], "Entertainment", 0.90, 1.0),
+            
+            # Travel - High confidence
+            (["hotel", "hostel", "motel"], "Travel", 0.90, 1.0),
+            (["airbnb", "booking.com", "expedia"], "Travel", 0.95, 1.0),
+            (["airline", "airways", "aero"], "Travel", 0.90, 1.0),
+            (["flight", "airport"], "Travel", 0.80, 0.9),
             
             # Services
-            (["doctor", "dentist", "medecin", "dentaire", "clinic", "clinique"], "Health"),
-            (["laundry", "laverie", "pressing"], "Services"),
-            (["post", "poste", "fedex", "ups", "dhl"], "Services"),
+            (["laundry", "laverie", "pressing", "dry clean"], "Services", 0.90, 1.0),
+            (["fedex", "ups", "dhl", "chronopost", "colissimo"], "Services", 0.95, 1.0),
+            (["post", "poste", "posta"], "Services", 0.70, 0.8),
             
             # Utilities/Subscription
-            (["mobile", "telecom", "telefon"], "Utilities"),
-            (["subscription", "premium", "membership"], "Subscription"),
+            (["netflix", "spotify", "amazon prime", "disney+", "hbo"], "Subscription", 0.98, 1.0),
+            (["mobile", "telecom", "telefon", "vodafone", "orange", "free mobile"], "Utilities", 0.90, 1.0),
+            (["subscription", "premium", "membership"], "Subscription", 0.75, 0.85),
         ]
         
-        for keywords, category in patterns:
+        best_match = None
+        best_confidence = 0.0
+        matched_keyword = None
+        
+        for keywords, category, base_conf, specificity in patterns:
             for keyword in keywords:
                 if keyword in name:
-                    return category
+                    # Calculate confidence with adjustments
+                    confidence = base_conf * specificity
+                    
+                    # Boost if keyword appears at the start
+                    if name.startswith(keyword.strip()):
+                        confidence = min(1.0, confidence * 1.1)
+                    
+                    # Boost for longer/more specific keyword matches
+                    if len(keyword) > 6:
+                        confidence = min(1.0, confidence * 1.05)
+                    
+                    # Penalize very short merchant names (could be ambiguous)
+                    if len(name) < 5:
+                        confidence *= 0.8
+                    
+                    if confidence > best_confidence:
+                        best_confidence = confidence
+                        best_match = category
+                        matched_keyword = keyword.strip()
         
-        return None
+        if with_confidence:
+            if best_match:
+                reason = f"matched '{matched_keyword}'"
+                return (best_match, round(best_confidence, 2), reason)
+            return (None, 0.0, None)
+        
+        return best_match
 
     def export_category_suggestions(self, output_path: str) -> int:
         """
         Export uncategorized merchants to CSV for user review.
         Returns number of suggestions exported.
+        
+        CSV columns:
+        - Merchant: The merchant name
+        - Category: Blank (for user to fill in)
+        - Transactions: Number of transactions
+        - TotalSpent: Total amount spent
+        - Suggested: AI-suggested category
+        - Confidence: Confidence score (0.0-1.0)
+        - Reason: Why this category was suggested
         """
         card_txns = [t for t in self.transactions if t.get("category") == "card"]
         
@@ -517,25 +601,40 @@ class PortfolioAnalyzer:
                 uncategorized[merchant]["count"] += 1
                 uncategorized[merchant]["total"] += abs(t.get("normalized_amount", 0))
         
-        # Filter to 2+ transactions
-        to_export = [
-            (m, d["count"], d["total"], self._suggest_category(m) or "")
-            for m, d in uncategorized.items()
-            if d["count"] >= 2
-        ]
+        # Filter to 2+ transactions and get suggestions with confidence
+        to_export = []
+        for m, d in uncategorized.items():
+            if d["count"] >= 2:
+                category, confidence, reason = self._suggest_category(m, with_confidence=True)
+                to_export.append({
+                    "merchant": m,
+                    "count": d["count"],
+                    "total": d["total"],
+                    "suggested": category or "",
+                    "confidence": confidence,
+                    "reason": reason or ""
+                })
         
         if not to_export:
             return 0
         
-        # Sort by total spent
-        to_export.sort(key=lambda x: x[2], reverse=True)
+        # Sort by confidence (highest first), then by total spent
+        to_export.sort(key=lambda x: (-x["confidence"], -x["total"]))
         
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(["Merchant", "Category", "Transactions", "TotalSpent", "Suggested"])
-            for merchant, count, total, suggested in to_export:
+            writer.writerow(["Merchant", "Category", "Transactions", "TotalSpent", "Suggested", "Confidence", "Reason"])
+            for item in to_export:
                 # Category column left blank for user to fill
-                writer.writerow([merchant, "", count, f"{total:.2f}", suggested])
+                writer.writerow([
+                    item["merchant"], 
+                    "", 
+                    item["count"], 
+                    f"{item['total']:.2f}", 
+                    item["suggested"],
+                    f"{item['confidence']:.2f}",
+                    item["reason"]
+                ])
         
         logger.info(f"Exported {len(to_export)} category suggestions to {output_path}")
         return len(to_export)
@@ -772,6 +871,9 @@ class PortfolioAnalyzer:
         if self.budget and self.budget > 0:
             budget_history = self._budget_history(by_month)
 
+        # Uncategorized merchants with AI suggestions
+        uncategorized_merchants = self._get_uncategorized_with_confidence(card_txns)
+
         return {
             "generated_at": datetime.now().isoformat(),
             "summary": {
@@ -802,6 +904,7 @@ class PortfolioAnalyzer:
                 "monthly_limit": self.budget,
                 "history": budget_history
             } if self.budget else None,
+            "uncategorized": uncategorized_merchants,
         }
 
     def _detect_subscriptions(self, card_txns: List[Dict]) -> List[Dict]:
@@ -908,3 +1011,52 @@ class PortfolioAnalyzer:
         
         lines.append(f"          └{'─' * bar_width}┘")
         return "\n".join(lines)
+
+    def _get_uncategorized_with_confidence(self, card_txns: List[Dict]) -> List[Dict]:
+        """
+        Get uncategorized merchants with AI category suggestions and confidence scores.
+        
+        Returns a list of dicts with:
+        - merchant: name
+        - transaction_count: number of transactions
+        - total_spent: total amount
+        - suggested_category: AI suggestion (or null)
+        - confidence: 0.0-1.0 score
+        - confidence_level: "high", "medium", "low", or "none"
+        - reason: explanation for suggestion
+        """
+        uncategorized = defaultdict(lambda: {"count": 0, "total": 0.0})
+        for t in card_txns:
+            if t.get("spending_category", "Other") == "Other":
+                merchant = t["merchant"]
+                uncategorized[merchant]["count"] += 1
+                uncategorized[merchant]["total"] += abs(t.get("normalized_amount", 0))
+        
+        results = []
+        for merchant, data in uncategorized.items():
+            if data["count"] >= 2:  # Only include recurring uncategorized
+                category, confidence, reason = self._suggest_category(merchant, with_confidence=True)
+                
+                # Map confidence to human-readable level
+                if confidence >= 0.85:
+                    level = "high"
+                elif confidence >= 0.70:
+                    level = "medium"
+                elif confidence > 0:
+                    level = "low"
+                else:
+                    level = "none"
+                
+                results.append({
+                    "merchant": merchant,
+                    "transaction_count": data["count"],
+                    "total_spent": round(data["total"], 2),
+                    "suggested_category": category,
+                    "confidence": confidence,
+                    "confidence_level": level,
+                    "reason": reason,
+                })
+        
+        # Sort by confidence (highest first), then by total spent
+        results.sort(key=lambda x: (-x["confidence"], -x["total_spent"]))
+        return results

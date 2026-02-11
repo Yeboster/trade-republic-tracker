@@ -45,6 +45,11 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **JSON Export:** New `--format json` and `--json-output PATH` flags for programmatic access to all report data.
   - **Historical Budget Tracking:** New report section shows month-by-month budget adherence with visual indicators (🟢🟡🔴).
   - **Structured Data:** JSON output includes summary, spending by category, top merchants, subscriptions, monthly breakdown, and budget history.
+- **Iteration 13 (Category Confidence Scores):** **Completed (2026-02-11).**
+  - **Confidence Scoring:** AI category suggestions now include confidence scores (0.0-1.0) based on keyword specificity, match position, and name length.
+  - **Visual Indicators:** Report displays confidence as ●●● (high ≥85%), ●●○ (medium ≥70%), ●○○ (low), ○○○ (none).
+  - **Enhanced CSV Export:** Category suggestions CSV now includes Confidence and Reason columns for better review workflow.
+  - **JSON Uncategorized:** JSON output now includes `uncategorized` array with full confidence metadata (`confidence`, `confidence_level`, `reason`).
 
 ## Usage
 
