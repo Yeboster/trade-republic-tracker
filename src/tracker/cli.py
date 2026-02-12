@@ -8,6 +8,7 @@ from .client import TradeRepublicClient
 from .timeline import TimelineManager
 from .analysis import PortfolioAnalyzer, AlertThresholds
 from .categories import add_rule, append_rules_to_csv
+from .normalize import normalize_merchant, MerchantNormalizer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Main")
@@ -56,6 +57,12 @@ async def main():
                         help="Output Telegram-formatted alerts only (if any)")
     parser.add_argument("--telegram-threshold", type=int, default=0, metavar="N",
                         help="Min alerts required for telegram output (default: 0 = always)")
+    
+    # Merchant normalization
+    parser.add_argument("--normalize", action="store_true",
+                        help="Normalize merchant names (remove store IDs, clean brand names)")
+    parser.add_argument("--show-normalization", action="store_true",
+                        help="Show normalization mappings applied (for debugging)")
     
     # Threshold configuration
     parser.add_argument("--threshold-large-first", type=float, default=150.0,
@@ -195,6 +202,33 @@ async def main():
             await client.close()
 
     # ── Post-Processing & Output ────────────────────────────
+    
+    # Apply merchant name normalization if requested
+    if args.normalize and transactions:
+        normalizer = MerchantNormalizer()
+        normalization_changes = []
+        
+        for t in transactions:
+            if t.get("category") == "card" and t.get("merchant"):
+                original = t["merchant"]
+                normalized = normalizer.normalize(original)
+                if normalized != original:
+                    normalization_changes.append((original, normalized))
+                    t["merchant_original"] = original  # Keep original for reference
+                    t["merchant"] = normalized
+        
+        if normalization_changes:
+            unique_changes = list(set(normalization_changes))
+            logger.info(f"Normalized {len(unique_changes)} unique merchant names")
+            
+            if args.show_normalization:
+                print(f"\n🔧 MERCHANT NORMALIZATION ({len(unique_changes)} changes)")
+                print("=" * 60)
+                for orig, norm in sorted(unique_changes)[:30]:
+                    print(f"   {orig[:35]:<35s} → {norm}")
+                if len(unique_changes) > 30:
+                    print(f"   ... and {len(unique_changes) - 30} more")
+                print()
     
     # Build alert thresholds from CLI args
     thresholds = AlertThresholds(

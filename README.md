@@ -89,6 +89,15 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
   - **Alerts-Only Mode:** New `--telegram-alerts` flag outputs only alerts in Telegram format (silent if no alerts).
   - **Alert Threshold:** `--telegram-threshold N` only outputs if N or more alerts are detected.
   - **OpenClaw Integration:** Output designed to be piped to OpenClaw's messaging system for automated spending notifications.
+- **Iteration 19 (Merchant Name Normalization):** **Completed (2026-02-12).**
+  - **Clean Merchant Names:** New `--normalize` flag cleans up messy merchant names from card transactions.
+  - **Features:**
+    - Removes store numbers/IDs (e.g., "LIDL #12345" → "Lidl")
+    - Removes location suffixes (e.g., "CARREFOUR PARIS 7E" → "Carrefour")
+    - Normalizes brand names using 100+ known mappings
+    - Smart title case for unknown merchants
+  - **Debug Mode:** `--show-normalization` flag shows all applied mappings.
+  - **Use Case:** Cleaner spending reports, better merchant aggregation, easier categorization.
 
 ## Usage
 
@@ -155,6 +164,17 @@ python3 -m src.tracker.cli --input my_transactions.csv --telegram-digest --teleg
 # Example: Pipe to OpenClaw messaging (cron job)
 # DIGEST=$(python3 -m src.tracker.cli --input ~/transactions.csv --telegram-digest --budget 2000)
 # if [ -n "$DIGEST" ]; then openclaw message send --to marco --message "$DIGEST"; fi
+
+# === MERCHANT NORMALIZATION ===
+
+# Clean up messy merchant names in reports
+python3 -m src.tracker.cli --input my_transactions.csv --normalize
+
+# See what names were normalized
+python3 -m src.tracker.cli --input my_transactions.csv --normalize --show-normalization
+
+# Combine with other features
+python3 -m src.tracker.cli --input my_transactions.csv --normalize --budget 2000 --format json
 ```
 
 ## Structure
@@ -162,4 +182,5 @@ python3 -m src.tracker.cli --input my_transactions.csv --telegram-digest --teleg
 - `src/tracker/client.py`: Core API client (Auth + WebSocket).
 - `src/tracker/timeline.py`: Timeline management and processing.
 - `src/tracker/analysis.py`: Logic for spending reports and profit/loss calculation.
+- `src/tracker/normalize.py`: Merchant name normalization (100+ brand mappings).
 - `src/tracker/cli.py`: Command-line interface.
