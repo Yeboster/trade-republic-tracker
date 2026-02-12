@@ -84,6 +84,11 @@ A Python-based tool to track Trade Republic finances, with a specific focus on *
     - WoW change percentages with visual status (🔴🟡🟢)
     - Transaction count per week
   - **JSON Support:** Weekly trends included in JSON output.
+- **Iteration 18 (Telegram Integration):** **Completed (2026-02-12).**
+  - **Telegram Digest:** New `--telegram-digest` flag outputs a formatted spending summary with alerts, ready for Telegram (HTML format).
+  - **Alerts-Only Mode:** New `--telegram-alerts` flag outputs only alerts in Telegram format (silent if no alerts).
+  - **Alert Threshold:** `--telegram-threshold N` only outputs if N or more alerts are detected.
+  - **OpenClaw Integration:** Output designed to be piped to OpenClaw's messaging system for automated spending notifications.
 
 ## Usage
 
@@ -135,6 +140,21 @@ python3 -m src.tracker.cli --input my_transactions.csv \
 python3 -m src.tracker.cli --input my_transactions.csv \
   --threshold-large-first 250 \
   --threshold-daily-min 500
+
+# === TELEGRAM INTEGRATION ===
+
+# Generate Telegram-formatted spending digest
+python3 -m src.tracker.cli --input my_transactions.csv --telegram-digest --budget 2000
+
+# Output only if there are alerts (silent otherwise)
+python3 -m src.tracker.cli --input my_transactions.csv --telegram-alerts
+
+# Only notify if 3+ alerts detected
+python3 -m src.tracker.cli --input my_transactions.csv --telegram-digest --telegram-threshold 3
+
+# Example: Pipe to OpenClaw messaging (cron job)
+# DIGEST=$(python3 -m src.tracker.cli --input ~/transactions.csv --telegram-digest --budget 2000)
+# if [ -n "$DIGEST" ]; then openclaw message send --to marco --message "$DIGEST"; fi
 ```
 
 ## Structure

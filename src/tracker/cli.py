@@ -49,6 +49,14 @@ async def main():
     parser.add_argument("--category-goals", type=str, metavar="PATH",
                         help="Path to category goals CSV (default: data/category_goals.csv)")
     
+    # Telegram integration
+    parser.add_argument("--telegram-digest", action="store_true",
+                        help="Output Telegram-formatted spending digest (HTML)")
+    parser.add_argument("--telegram-alerts", action="store_true",
+                        help="Output Telegram-formatted alerts only (if any)")
+    parser.add_argument("--telegram-threshold", type=int, default=0, metavar="N",
+                        help="Min alerts required for telegram output (default: 0 = always)")
+    
     # Threshold configuration
     parser.add_argument("--threshold-large-first", type=float, default=150.0,
                         metavar="EUR", help="Min € for first-time large purchase alert (default: 150)")
@@ -260,7 +268,26 @@ async def main():
         else:
             print("\n✓ No uncategorized merchants with 2+ transactions found.")
 
-    # 4. Analyze
+    # 4. Telegram Digest (special output mode)
+    if transactions and (args.telegram_digest or args.telegram_alerts):
+        analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals, thresholds=thresholds)
+        
+        if args.telegram_alerts:
+            digest = analyzer.generate_telegram_alert_only()
+        else:
+            digest = analyzer.generate_telegram_digest(
+                include_summary=True,
+                alert_threshold=args.telegram_threshold
+            )
+        
+        if digest:
+            print(digest)
+        else:
+            # No output if below threshold or no alerts
+            logger.info("No alerts to report (below threshold or none detected)")
+        return  # Exit early for telegram mode
+
+    # 5. Analyze
     if transactions:
         analyzer = PortfolioAnalyzer(transactions, budget=args.budget, category_goals_path=args.category_goals, thresholds=thresholds)
         

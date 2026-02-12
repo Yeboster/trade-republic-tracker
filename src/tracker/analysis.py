@@ -394,6 +394,168 @@ class PortfolioAnalyzer:
         """Return weekly trends data (call after generate_report)."""
         return getattr(self, '_weekly_trends_data', [])
 
+    def generate_telegram_digest(self, include_summary: bool = True, alert_threshold: int = 0) -> str:
+        """
+        Generate a Telegram-friendly spending digest with alerts.
+        Uses Telegram's supported HTML formatting.
+        
+        Args:
+            include_summary: Include spending summary section
+            alert_threshold: Only include digest if alert count >= threshold (0 = always)
+        
+        Returns:
+            Formatted string for Telegram (empty string if below threshold)
+        """
+        # Generate full report to populate internal data
+        self.generate_report()
+        
+        alerts = self.get_alerts()
+        category_goals = self.get_category_goals_data()
+        weekly_trends = self.get_weekly_trends_data()
+        
+        # Check threshold
+        if alert_threshold > 0 and len(alerts) < alert_threshold:
+            return ""
+        
+        lines = []
+        
+        # Header
+        lines.append("💳 <b>Trade Republic Digest</b>")
+        lines.append("")
+        
+        # ── Summary Section ──
+        if include_summary:
+            card_txns = [t for t in self.transactions if t.get("category") == "card"]
+            if card_txns:
+                # Current month spending
+                now = datetime.now()
+                current_month = now.strftime("%Y-%m")
+                day_of_month = now.day
+                
+                mtd_spending = sum(
+                    abs(t["normalized_amount"]) 
+                    for t in card_txns 
+                    if _parse_month(t) == current_month and t["normalized_amount"] < 0
+                )
+                
+                # Projected
+                projected = (mtd_spending / day_of_month * 30) if day_of_month > 0 else mtd_spending
+                
+                lines.append(f"📊 <b>{now.strftime('%B %Y')}</b> (Day {day_of_month})")
+                lines.append(f"• Spent: <code>€{mtd_spending:,.0f}</code>")
+                lines.append(f"• Projected: <code>€{projected:,.0f}</code>")
+                
+                # Budget status
+                if self.budget and self.budget > 0:
+                    remaining = self.budget - mtd_spending
+                    pct = (mtd_spending / self.budget) * 100
+                    expected_pct = (day_of_month / 30) * 100
+                    
+                    if pct >= 100:
+                        status = "🔴 Over budget!"
+                    elif pct > expected_pct + 15:
+                        status = "🟡 Over pace"
+                    else:
+                        status = "🟢 On track"
+                    
+                    lines.append(f"• Budget: <code>€{mtd_spending:,.0f}/€{self.budget:,.0f}</code> ({pct:.0f}%) {status}")
+                
+                lines.append("")
+        
+        # ── Weekly Trend ──
+        if weekly_trends and len(weekly_trends) >= 2:
+            recent = weekly_trends[-1]
+            prev = weekly_trends[-2]
+            
+            wow_change = recent.get("wow_change")
+            if wow_change is not None:
+                if wow_change > 20:
+                    trend_icon = "📈"
+                    trend_text = f"+{wow_change:.0f}%"
+                elif wow_change < -20:
+                    trend_icon = "📉"
+                    trend_text = f"{wow_change:.0f}%"
+                else:
+                    trend_icon = "➡️"
+                    trend_text = f"{wow_change:+.0f}%"
+                
+                lines.append(f"{trend_icon} <b>Weekly:</b> €{recent['spend']:,.0f} ({trend_text} WoW)")
+                lines.append("")
+        
+        # ── Category Goals ──
+        if category_goals:
+            over_budget = [g for g in category_goals if not g["on_track"]]
+            if over_budget:
+                lines.append("🎯 <b>Category Alerts:</b>")
+                for g in over_budget[:3]:  # Top 3
+                    status_icon = "🔴" if g["percent_used"] >= 100 else "🟡"
+                    lines.append(f"• {g['category']}: {status_icon} {g['percent_used']:.0f}% (€{g['spent']:,.0f}/€{g['limit']:,.0f})")
+                lines.append("")
+        
+        # ── Spending Alerts ──
+        if alerts:
+            lines.append(f"🚨 <b>Alerts ({len(alerts)})</b>")
+            
+            # Group and summarize
+            cat_spikes = [a for a in alerts if a["type"] == "category_spike"]
+            large_txns = [a for a in alerts if a["type"] in ("large_outlier", "large_first")]
+            daily_spikes = [a for a in alerts if a["type"] == "daily_spike"]
+            new_merchants = [a for a in alerts if a["type"] == "new_merchant"]
+            
+            # Show top alerts by type (keep it concise)
+            if cat_spikes:
+                for a in cat_spikes[:2]:
+                    lines.append(f"• ⚠️ {a['category']}: €{a['current']:.0f} (avg €{a['average']:.0f})")
+            
+            if large_txns:
+                for a in large_txns[:2]:
+                    if a["type"] == "large_first":
+                        lines.append(f"• 💸 New: {a['merchant'][:20]} €{a['amount']:.2f}")
+                    else:
+                        lines.append(f"• 💸 {a['merchant'][:20]}: €{a['amount']:.2f} (avg €{a['average']:.2f})")
+            
+            if daily_spikes:
+                top_spike = max(daily_spikes, key=lambda x: x["amount"])
+                lines.append(f"• 📅 Spike: {top_spike['date']} €{top_spike['amount']:.0f}")
+            
+            if new_merchants and len(new_merchants) > 1:
+                lines.append(f"• 🆕 {len(new_merchants)} new merchants this week")
+        else:
+            lines.append("✅ No spending alerts")
+        
+        return "\n".join(lines)
+
+    def generate_telegram_alert_only(self) -> str:
+        """
+        Generate a minimal Telegram alert message (only if there are alerts).
+        Returns empty string if no alerts.
+        """
+        self.generate_report()
+        alerts = self.get_alerts()
+        
+        if not alerts:
+            return ""
+        
+        lines = ["🚨 <b>TR Spending Alert</b>", ""]
+        
+        # Prioritize by severity
+        cat_spikes = [a for a in alerts if a["type"] == "category_spike"]
+        large_txns = [a for a in alerts if a["type"] in ("large_outlier", "large_first")]
+        
+        if cat_spikes:
+            for a in cat_spikes[:3]:
+                pct_over = ((a['current'] / a['average']) - 1) * 100 if a['average'] > 0 else 0
+                lines.append(f"• {a['category']}: +{pct_over:.0f}% vs avg")
+        
+        if large_txns:
+            for a in large_txns[:3]:
+                lines.append(f"• {a['merchant'][:25]}: €{a['amount']:.2f}")
+        
+        lines.append("")
+        lines.append(f"<i>{len(alerts)} total alerts</i>")
+        
+        return "\n".join(lines)
+
     # ── Category Goals (Per-Category Budgets) ───────────────────────
 
     def _category_goals_section(self, card_txns) -> str:
