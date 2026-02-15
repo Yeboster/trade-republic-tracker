@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple
 import logging
 import os
@@ -661,7 +661,7 @@ class PortfolioAnalyzer:
             return ""
 
         alerts = []
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # ── 1. Large Transaction Detection ──
         # Group by merchant to find outliers
