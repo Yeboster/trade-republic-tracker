@@ -122,7 +122,7 @@ class TradeRepublicClient:
         logger.info("Tokens saved to tokens.json")
 
     async def ws_connect(self):
-        if self.ws and not self.ws.closed:
+        if self.ws and not self.ws.close:
             return
 
         logger.info(f"Connecting to WebSocket {self.WS_URL}...")
